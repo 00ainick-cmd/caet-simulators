@@ -1771,14 +1771,16 @@
 
         // ===== APPLY POWER-UP =====
         function applyPowerUp(type) {
+            if (!player) return; // Safety check - prevent crashes if player doesn't exist
+
             switch(type) {
                 case 'life':
                     lives++;
-                    addFloatingText(player.x, player.y, '+1 LIFE', COLORS.perfect);
+                    showFloatingText(player.x, player.y, '+1 LIFE', COLORS.perfect);
                     break;
                 case 'rapid':
                     player.shootCooldownTime = 150; // Faster shooting
-                    addFloatingText(player.x, player.y, 'RAPID FIRE!', COLORS.explosion1);
+                    showFloatingText(player.x, player.y, 'RAPID FIRE!', COLORS.explosion1);
                     setTimeout(() => {
                         if (player) player.shootCooldownTime = 250;
                     }, 10000); // 10 seconds
@@ -1786,7 +1788,7 @@
                 case 'dual':
                     if (!dualFighterActive) {
                         dualFighterActive = true;
-                        addFloatingText(player.x, player.y, 'DUAL FIGHTERS!', COLORS.player);
+                        showFloatingText(player.x, player.y, 'DUAL FIGHTERS!', COLORS.player);
                     }
                     break;
             }
@@ -1820,6 +1822,8 @@
 
         // ===== CAPTURE MECHANICS =====
         function capturePlayer(capturingBoss) {
+            if (!player) return; // Safety check - prevent crashes if player doesn't exist
+
             playSound('tractorBeam');
             capturedShip = {
                 boss: capturingBoss,

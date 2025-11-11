@@ -325,6 +325,7 @@
             }
 
             collidesWith(entity) {
+                if (!entity) return false; // Safety check
                 return this.x < entity.x + entity.width / 2 &&
                        this.x > entity.x - entity.width / 2 &&
                        this.y < entity.y + entity.height / 2 &&
@@ -854,6 +855,7 @@
             }
 
             collidesWith(entity) {
+                if (!entity) return false; // Safety check
                 return Math.abs(this.x - entity.x) < (this.width + entity.width) / 2 &&
                        Math.abs(this.y - entity.y) < (this.height + entity.height) / 2;
             }
@@ -958,6 +960,7 @@
             }
 
             collidesWith(entity) {
+                if (!entity) return false; // Safety check
                 return Math.abs(this.x - entity.x) < (this.width + entity.width) / 2 &&
                        Math.abs(this.y - entity.y) < (this.height + entity.height) / 2;
             }

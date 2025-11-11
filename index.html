@@ -1732,7 +1732,7 @@
             // Enemy collision with player
             if (player) {
                 enemies.forEach(enemy => {
-                    if (!enemy.active) return;
+                    if (!enemy.active || !player) return; // Check player exists each iteration
 
                     if (enemy.collidesWith(player)) {
                         // Destroy the enemy too
@@ -1740,9 +1740,10 @@
                         createExplosion(enemy.x, enemy.y, 20);
                         // Player loses life
                         playerHit();
+                        return; // Exit this iteration after player is hit
                     }
 
-                    // Check tractor beam collision
+                    // Check tractor beam collision (only if player still exists)
                     if (enemy.tractorBeamActive && !capturedShip && player) {
                         const beamLeft = enemy.x - 25;
                         const beamRight = enemy.x + 25;
@@ -1756,21 +1757,25 @@
                     }
                 });
 
-                // Power-up collision with player
-                powerUps.forEach(powerUp => {
-                    if (!powerUp.active) return;
+                // Power-up collision with player (check player still exists)
+                if (player) {
+                    powerUps.forEach(powerUp => {
+                        if (!powerUp.active || !player) return; // Check player exists each iteration
 
-                    if (powerUp.collidesWith(player)) {
-                        powerUp.active = false;
-                        applyPowerUp(powerUp.type);
-                        playSound('extraLife');
-                    }
-                });
+                        if (powerUp.collidesWith(player)) {
+                            powerUp.active = false;
+                            applyPowerUp(powerUp.type);
+                            playSound('extraLife');
+                        }
+                    });
+                }
             }
         }
 
         // ===== APPLY POWER-UP =====
         function applyPowerUp(type) {
+            if (!player) return; // Safety check
+
             switch(type) {
                 case 'life':
                     lives++;
@@ -1820,6 +1825,8 @@
 
         // ===== CAPTURE MECHANICS =====
         function capturePlayer(capturingBoss) {
+            if (!player) return; // Safety check
+
             playSound('tractorBeam');
             capturedShip = {
                 boss: capturingBoss,

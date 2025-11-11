@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HANGAR DEFENDER - Aviation CAET Study Game</title>
     <style>
+        /* ===== IMPORT RETRO FONT ===== */
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
         /* ===== SEGA GENESIS AESTHETIC ===== */
         * {
             margin: 0;
@@ -14,7 +17,7 @@
 
         body {
             background: #000;
-            font-family: 'Courier New', monospace;
+            font-family: 'Orbitron', 'Courier New', monospace;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -156,7 +159,7 @@
         };
 
         // ===== GAME STATE =====
-        let gameState = 'ATTRACT'; // ATTRACT, PLAYING, PAUSED, GAME_OVER, QUESTIONS, BONUS, NAME_ENTRY
+        let gameState = 'MENU'; // MENU, ATTRACT, PLAYING, PAUSED, GAME_OVER, QUESTIONS, BONUS, NAME_ENTRY
         let currentStage = 1;
         let score = 0;
         let highScore = 0;
@@ -166,6 +169,12 @@
         let keys = {};
         let frameCount = 0;
 
+        // ===== KONAMI CODE =====
+        let konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+        let konamiProgress = 0;
+        let konamiActivated = false;
+        let easterEggMode = false;
+
         // ===== ENTITY ARRAYS =====
         let player = null;
         let capturedShip = null;
@@ -174,6 +183,7 @@
         let bullets = [];
         let particles = [];
         let stars = [];
+        let powerUps = [];
 
         // ===== GAME SETTINGS =====
         let settings = {
@@ -278,6 +288,7 @@
                 this.color = color;
                 this.isEnemy = isEnemy;
                 this.active = true;
+                this.rainbowHue = Math.random() * 360;
             }
 
             update() {
@@ -287,6 +298,11 @@
                     this.y -= this.speed;
                 }
 
+                // Update rainbow effect in konami mode
+                if (easterEggMode && !this.isEnemy) {
+                    this.rainbowHue = (this.rainbowHue + 5) % 360;
+                }
+
                 // Remove if off screen
                 if (this.y < 0 || this.y > GAME_HEIGHT) {
                     this.active = false;
@@ -294,9 +310,16 @@
             }
 
             draw() {
-                ctx.fillStyle = this.color;
-                ctx.shadowBlur = 8;
-                ctx.shadowColor = this.color;
+                // Rainbow bullets in konami mode
+                if (easterEggMode && !this.isEnemy) {
+                    ctx.fillStyle = `hsl(${this.rainbowHue}, 100%, 50%)`;
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = `hsl(${this.rainbowHue}, 100%, 50%)`;
+                } else {
+                    ctx.fillStyle = this.color;
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = this.color;
+                }
                 ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
                 ctx.shadowBlur = 0;
             }
@@ -407,7 +430,9 @@
 
                     case 'FORMATION':
                         // Idle in formation with slow horizontal movement
+                        // Constrain to screen bounds to prevent off-screen positioning
                         this.x = this.formationX + formationOffsetX;
+                        this.x = Math.max(this.width / 2 + 10, Math.min(GAME_WIDTH - this.width / 2 - 10, this.x));
                         break;
 
                     case 'DIVING':
@@ -861,6 +886,80 @@
                 ctx.fillStyle = this.color;
                 ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
                 ctx.globalAlpha = 1;
+            }
+        }
+
+        // ===== POWER-UP CLASS =====
+        class PowerUp {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type; // 'rapid', 'dual', 'shield', 'life'
+                this.width = 24;
+                this.height = 24;
+                this.speed = 2;
+                this.active = true;
+                this.pulse = 0;
+            }
+
+            update() {
+                this.y += this.speed;
+                this.pulse += 0.1;
+
+                // Remove if off screen
+                if (this.y > GAME_HEIGHT + 50) {
+                    this.active = false;
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                const pulseSize = Math.sin(this.pulse) * 3;
+
+                // Power-up box
+                ctx.fillStyle = this.getColor();
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.getColor();
+                ctx.beginPath();
+                ctx.arc(0, 0, 12 + pulseSize, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Symbol
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 16px Orbitron';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.getSymbol(), 0, 0);
+
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            }
+
+            getColor() {
+                switch(this.type) {
+                    case 'rapid': return '#ff6600';
+                    case 'dual': return '#00ffff';
+                    case 'shield': return '#ffff00';
+                    case 'life': return '#ff00ff';
+                    default: return '#ffffff';
+                }
+            }
+
+            getSymbol() {
+                switch(this.type) {
+                    case 'rapid': return 'R';
+                    case 'dual': return 'D';
+                    case 'shield': return 'S';
+                    case 'life': return '+';
+                    default: return '?';
+                }
+            }
+
+            collidesWith(entity) {
+                return Math.abs(this.x - entity.x) < (this.width + entity.width) / 2 &&
+                       Math.abs(this.y - entity.y) < (this.height + entity.height) / 2;
             }
         }
 
@@ -1503,44 +1602,60 @@
         function createFormation(stage) {
             enemies = [];
             const formationStartY = 80;
-            const spacingX = 45;
-            const spacingY = 45;
-            const formationStartX = GAME_WIDTH / 2 - (4.5 * spacingX) / 2;
+            const spacingX = 38; // Reduced from 45 to fit better
+            const spacingY = 42;
+            const maxSwing = 20; // Maximum formation swing amount
+            const safeMargin = 40; // Keep enemies this far from edges
+
+            // Calculate max width to fit on screen with swing and margins
+            const maxFormationWidth = GAME_WIDTH - (2 * safeMargin) - (2 * maxSwing);
+            const maxEnemiesPerRow = Math.floor(maxFormationWidth / spacingX);
+
+            // Start formation centered
+            const formationCenterX = GAME_WIDTH / 2;
 
             // Row 1: Capture aliens (the ones with tractor beam)
-            const captureCount = Math.floor((stage >= 10 ? 3 : 2) * 1.5);
+            const captureCount = Math.min(3, stage >= 10 ? 3 : 2);
+            const captureStartX = formationCenterX - ((captureCount - 1) * spacingX) / 2;
             for (let i = 0; i < captureCount; i++) {
-                const x = formationStartX + (i + 1.5) * spacingX;
+                const x = captureStartX + i * spacingX;
                 const y = formationStartY;
                 enemies.push(new Enemy('capture', x, y, i, 0));
             }
 
             // Row 2: Bosses (smaller and more agile now)
-            const bossCount = Math.floor((stage >= 10 ? 6 : 4) * 1.5);
+            const bossCount = Math.min(maxEnemiesPerRow, stage >= 10 ? 6 : 4);
+            const bossStartX = formationCenterX - ((bossCount - 1) * spacingX) / 2;
             for (let i = 0; i < bossCount; i++) {
-                const x = formationStartX + i * spacingX;
+                const x = bossStartX + i * spacingX;
                 const y = formationStartY + spacingY;
                 enemies.push(new Enemy('boss', x, y, i, 1));
             }
 
             // Row 3: Butterflies
-            for (let i = 0; i < Math.floor(6 * 1.5); i++) {
-                const x = formationStartX + (i - 1) * spacingX;
+            const butterflyCount = Math.min(maxEnemiesPerRow, 6);
+            const butterflyStartX = formationCenterX - ((butterflyCount - 1) * spacingX) / 2;
+            for (let i = 0; i < butterflyCount; i++) {
+                const x = butterflyStartX + i * spacingX;
                 const y = formationStartY + spacingY * 2;
                 enemies.push(new Enemy('butterfly', x, y, i, 2));
             }
 
             // Row 4: Dragonflies
-            for (let i = 0; i < Math.floor(6 * 1.5); i++) {
-                const x = formationStartX + (i - 1) * spacingX;
+            const dragonflyCount = Math.min(maxEnemiesPerRow, 6);
+            const dragonflyStartX = formationCenterX - ((dragonflyCount - 1) * spacingX) / 2;
+            for (let i = 0; i < dragonflyCount; i++) {
+                const x = dragonflyStartX + i * spacingX;
                 const y = formationStartY + spacingY * 3;
                 enemies.push(new Enemy('dragonfly', x, y, i, 3));
             }
 
-            // Rows 5-6: Bees
+            // Rows 5-7: Bees
+            const beeCount = Math.min(maxEnemiesPerRow, 8);
             for (let row = 0; row < 3; row++) {
-                for (let i = 0; i < Math.floor(8 * 1.5); i++) {
-                    const x = formationStartX - spacingX * 1.5 + i * spacingX;
+                const beeStartX = formationCenterX - ((beeCount - 1) * spacingX) / 2;
+                for (let i = 0; i < beeCount; i++) {
+                    const x = beeStartX + i * spacingX;
                     const y = formationStartY + spacingY * (4 + row);
                     enemies.push(new Enemy('bee', x, y, i, 4 + row));
                 }
@@ -1551,15 +1666,33 @@
         let lastDiveTime = 0;
         function updateDiveAttacks() {
             const now = Date.now();
-            const diveFrequency = Math.max(1000, 4000 - currentStage * 100);
+            // More frequent dives, scaling with stage
+            const diveFrequency = Math.max(800, 3000 - currentStage * 150);
 
             if (now - lastDiveTime > diveFrequency) {
                 const formationEnemies = enemies.filter(e => e.state === 'FORMATION' && e.active);
                 if (formationEnemies.length > 0) {
-                    const randomEnemy = formationEnemies[Math.floor(Math.random() * formationEnemies.length)];
-                    randomEnemy.startDive();
+                    // Sometimes send 2-3 enemies at once for harder difficulty
+                    const numAttackers = currentStage > 5 ? Math.min(3, Math.floor(Math.random() * 3) + 1) : 1;
+
+                    for (let i = 0; i < numAttackers && i < formationEnemies.length; i++) {
+                        const randomEnemy = formationEnemies[Math.floor(Math.random() * formationEnemies.length)];
+                        if (randomEnemy.state === 'FORMATION') {
+                            randomEnemy.startDive();
+                        }
+                    }
                     lastDiveTime = now;
                 }
+            }
+        }
+
+        // ===== POWER-UP SPAWNING =====
+        function spawnPowerUp(x, y) {
+            // 15% chance to drop a power-up when enemy is destroyed
+            if (Math.random() < 0.15) {
+                const types = ['rapid', 'dual', 'life'];
+                const type = types[Math.floor(Math.random() * types.length)];
+                powerUps.push(new PowerUp(x, y, type));
             }
         }
 
@@ -1589,6 +1722,9 @@
                         }
 
                         createExplosion(enemy.x, enemy.y, 20);
+
+                        // Chance to spawn power-up
+                        spawnPowerUp(enemy.x, enemy.y);
                     }
                 });
             });
@@ -1619,6 +1755,40 @@
                         }
                     }
                 });
+
+                // Power-up collision with player
+                powerUps.forEach(powerUp => {
+                    if (!powerUp.active) return;
+
+                    if (powerUp.collidesWith(player)) {
+                        powerUp.active = false;
+                        applyPowerUp(powerUp.type);
+                        playSound('extraLife');
+                    }
+                });
+            }
+        }
+
+        // ===== APPLY POWER-UP =====
+        function applyPowerUp(type) {
+            switch(type) {
+                case 'life':
+                    lives++;
+                    addFloatingText(player.x, player.y, '+1 LIFE', COLORS.perfect);
+                    break;
+                case 'rapid':
+                    player.shootCooldownTime = 150; // Faster shooting
+                    addFloatingText(player.x, player.y, 'RAPID FIRE!', COLORS.explosion1);
+                    setTimeout(() => {
+                        if (player) player.shootCooldownTime = 250;
+                    }, 10000); // 10 seconds
+                    break;
+                case 'dual':
+                    if (!dualFighterActive) {
+                        dualFighterActive = true;
+                        addFloatingText(player.x, player.y, 'DUAL FIGHTERS!', COLORS.player);
+                    }
+                    break;
             }
         }
 
@@ -1726,7 +1896,7 @@
             floatingTexts.forEach(ft => {
                 ctx.globalAlpha = ft.life / 60;
                 ctx.fillStyle = ft.color;
-                ctx.font = 'bold 20px "Courier New"';
+                ctx.font = 'bold 18px Orbitron';
                 ctx.textAlign = 'center';
                 ctx.fillText(ft.text, ft.x, ft.y);
                 ctx.globalAlpha = 1;
@@ -1821,7 +1991,7 @@
         // ===== DRAW HUD =====
         function drawHUD() {
             ctx.fillStyle = COLORS.hudText;
-            ctx.font = 'bold 18px "Courier New"';
+            ctx.font = 'bold 16px Orbitron';
             ctx.textAlign = 'left';
 
             // Score
@@ -1837,14 +2007,28 @@
 
             // Lives
             ctx.fillText('LIVES:', 20, 80);
-            for (let i = 0; i < lives; i++) {
+            for (let i = 0; i < Math.min(lives, 10); i++) { // Show max 10 lives icons
                 drawLifeIcon(100 + i * 35, 70);
+            }
+            if (lives > 10) {
+                ctx.fillText(`+${lives - 10}`, 100 + 10 * 35, 80);
             }
 
             // 1UP indicator
             ctx.textAlign = 'center';
             if (frameCount % 60 < 30) {
                 ctx.fillText('1UP', GAME_WIDTH / 2, 30);
+            }
+
+            // Konami mode indicator
+            if (easterEggMode) {
+                ctx.font = 'bold 14px Orbitron';
+                ctx.fillStyle = COLORS.perfect;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = COLORS.perfect;
+                const konamiText = frameCount % 40 < 20 ? '★ KONAMI ★' : '★★ MODE ★★';
+                ctx.fillText(konamiText, GAME_WIDTH / 2, 55);
+                ctx.shadowBlur = 0;
             }
         }
 
@@ -1980,7 +2164,7 @@
 
             // Category and timer
             ctx.fillStyle = COLORS.hudText;
-            ctx.font = 'bold 16px "Courier New"';
+            ctx.font = 'bold 14px Orbitron';
             ctx.textAlign = 'left';
             ctx.fillText(`[CATEGORY: ${formatCategory(currentQ.category)}]`, boxX + 20, boxY + 30);
 
@@ -1990,12 +2174,12 @@
 
             // Question text
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 18px "Courier New"';
+            ctx.font = 'bold 16px Orbitron';
             ctx.textAlign = 'left';
             wrapText(ctx, currentQ.question, boxX + 20, boxY + 70, boxWidth - 40, 24);
 
             // Answers
-            ctx.font = 'bold 16px "Courier New"';
+            ctx.font = 'bold 14px Orbitron';
             const answerY = boxY + 140;
             const letters = ['A', 'B', 'C', 'D'];
 
@@ -2016,7 +2200,7 @@
 
             // Bonus info
             ctx.fillStyle = COLORS.scoreBonus;
-            ctx.font = 'bold 14px "Courier New"';
+            ctx.font = 'bold 13px Orbitron';
             ctx.textAlign = 'center';
             ctx.fillText('SCORE BONUS: +500 pts', GAME_WIDTH / 2, boxY + boxHeight - 20);
 
@@ -2100,7 +2284,7 @@
         function drawBonusStage() {
             // Timer
             ctx.fillStyle = COLORS.scoreBonus;
-            ctx.font = 'bold 24px "Courier New"';
+            ctx.font = 'bold 22px Orbitron';
             ctx.textAlign = 'center';
             ctx.fillText(`TIME: ${Math.ceil(bonusStageTimer / 60)}`, GAME_WIDTH / 2, 50);
         }
@@ -2135,10 +2319,77 @@
         // ===== ATTRACT MODE =====
         let attractTimer = 0;
 
+        // ===== MENU SCREEN =====
+        let menuSelection = 0;
+        const menuOptions = ['START GAME', 'VIEW HIGH SCORES', 'BACK TO HOME'];
+
+        function drawMenu() {
+            // Title
+            ctx.fillStyle = COLORS.hudText;
+            ctx.font = 'bold 48px Orbitron';
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = COLORS.hudText;
+
+            const titleY = 80;
+            ctx.fillText('HANGAR', GAME_WIDTH / 2, titleY);
+            ctx.fillText('DEFENDER', GAME_WIDTH / 2, titleY + 60);
+            ctx.shadowBlur = 0;
+
+            // Subtitle
+            ctx.font = '14px Orbitron';
+            ctx.fillStyle = COLORS.player;
+            ctx.fillText('Defend • Answer • Dominate', GAME_WIDTH / 2, titleY + 95);
+
+            // Easter egg hint (subtle)
+            if (konamiActivated) {
+                ctx.font = 'bold 16px Orbitron';
+                ctx.fillStyle = COLORS.perfect;
+                ctx.fillText('★ KONAMI MODE ACTIVE ★', GAME_WIDTH / 2, titleY + 120);
+            } else if (frameCount % 300 < 150) {
+                ctx.font = '10px Orbitron';
+                ctx.fillStyle = 'rgba(0, 255, 65, 0.3)';
+                ctx.fillText('hint: try the konami code...', GAME_WIDTH / 2, titleY + 120);
+            }
+
+            // Menu options
+            const menuStartY = 240;
+            const menuSpacing = 50;
+
+            for (let i = 0; i < menuOptions.length; i++) {
+                const y = menuStartY + i * menuSpacing;
+
+                // Highlight selected option
+                if (i === menuSelection) {
+                    ctx.fillStyle = COLORS.scoreBonus;
+                    ctx.font = 'bold 24px Orbitron';
+
+                    // Draw selection arrows
+                    ctx.fillText('►', GAME_WIDTH / 2 - 120, y);
+                    ctx.fillText('◄', GAME_WIDTH / 2 + 120, y);
+                } else {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '20px Orbitron';
+                }
+
+                ctx.fillText(menuOptions[i], GAME_WIDTH / 2, y);
+            }
+
+            // Instructions
+            ctx.font = '14px Orbitron';
+            ctx.fillStyle = COLORS.hudText;
+            ctx.fillText('[↑/↓: Navigate] [SPACE/ENTER: Select]', GAME_WIDTH / 2, 480);
+
+            // Version info
+            ctx.font = '10px Orbitron';
+            ctx.fillStyle = 'rgba(0, 255, 65, 0.5)';
+            ctx.fillText('v2.0 - Enhanced Edition', GAME_WIDTH / 2, 560);
+        }
+
         function drawAttractMode() {
             // Title
             ctx.fillStyle = COLORS.hudText;
-            ctx.font = 'bold 48px "Courier New"';
+            ctx.font = 'bold 48px Orbitron';
             ctx.textAlign = 'center';
             ctx.shadowBlur = 20;
             ctx.shadowColor = COLORS.hudText;
@@ -2149,24 +2400,24 @@
             ctx.shadowBlur = 0;
 
             // Subtitle
-            ctx.font = 'bold 16px "Courier New"';
+            ctx.font = 'bold 16px Orbitron';
             ctx.fillStyle = COLORS.player;
             ctx.fillText('Defend • Answer • Dominate', GAME_WIDTH / 2, titleY + 100);
 
             // Start prompt (blinking)
             if (frameCount % 60 < 30) {
-                ctx.font = 'bold 20px "Courier New"';
+                ctx.font = 'bold 20px Orbitron';
                 ctx.fillStyle = COLORS.scoreBonus;
                 ctx.fillText('>>> PRESS SPACE TO START <<<', GAME_WIDTH / 2, titleY + 140);
             }
 
             // Leaderboard
-            ctx.font = 'bold 20px "Courier New"';
+            ctx.font = 'bold 18px Orbitron';
             ctx.fillStyle = COLORS.hudText;
             ctx.fillText('═══════ HIGH SCORES ═══════', GAME_WIDTH / 2, titleY + 200);
 
             const rankText = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'];
-            ctx.font = '16px "Courier New"';
+            ctx.font = '14px Orbitron';
 
             for (let i = 0; i < Math.min(10, leaderboard.length); i++) {
                 const entry = leaderboard[i];
@@ -2189,14 +2440,14 @@
             ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
             ctx.fillStyle = COLORS.warning;
-            ctx.font = 'bold 60px "Courier New"';
+            ctx.font = 'bold 60px Orbitron';
             ctx.textAlign = 'center';
             ctx.shadowBlur = 30;
             ctx.shadowColor = COLORS.warning;
             ctx.fillText('GAME OVER', GAME_WIDTH / 2, GAME_HEIGHT / 2);
             ctx.shadowBlur = 0;
 
-            ctx.font = 'bold 20px "Courier New"';
+            ctx.font = 'bold 18px Orbitron';
             ctx.fillStyle = '#ffffff';
             ctx.fillText(`FINAL SCORE: ${score}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 60);
             ctx.fillText(`STAGES CLEARED: ${currentStage - 1}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 90);
@@ -2262,7 +2513,7 @@
 
             // Title
             ctx.fillStyle = COLORS.scoreBonus;
-            ctx.font = 'bold 36px "Courier New"';
+            ctx.font = 'bold 36px Orbitron';
             ctx.textAlign = 'center';
             ctx.shadowBlur = 20;
             ctx.shadowColor = COLORS.scoreBonus;
@@ -2271,12 +2522,12 @@
 
             // Rank and score
             const rankText = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'];
-            ctx.font = 'bold 24px "Courier New"';
+            ctx.font = 'bold 22px Orbitron';
             ctx.fillStyle = COLORS.hudText;
             ctx.fillText(`RANK: ${rankText[nameEntryData.rank]}    SCORE: ${score.toString().padStart(6, '0')}`, GAME_WIDTH / 2, 220);
 
             // Prompt
-            ctx.font = 'bold 20px "Courier New"';
+            ctx.font = 'bold 18px Orbitron';
             ctx.fillStyle = '#ffffff';
             ctx.fillText('ENTER YOUR INITIALS:', GAME_WIDTH / 2, 280);
 
@@ -2303,7 +2554,7 @@
 
                 // Character
                 ctx.fillStyle = i === nameEntryData.position ? COLORS.scoreBonus : '#ffffff';
-                ctx.font = 'bold 48px "Courier New"';
+                ctx.font = 'bold 48px Orbitron';
                 ctx.textAlign = 'center';
                 ctx.fillText(nameEntryData.name[i], x + boxWidth / 2, boxY + boxHeight / 2 + 18);
 
@@ -2315,7 +2566,7 @@
             }
 
             // Instructions
-            ctx.font = '16px "Courier New"';
+            ctx.font = '14px Orbitron';
             ctx.fillStyle = COLORS.hudText;
             ctx.textAlign = 'center';
             ctx.fillText('[UP/DOWN: Change Letter]', GAME_WIDTH / 2, 470);
@@ -2329,13 +2580,17 @@
             ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
             ctx.fillStyle = COLORS.scoreBonus;
-            ctx.font = 'bold 48px "Courier New"';
+            ctx.font = 'bold 48px Orbitron';
             ctx.textAlign = 'center';
             ctx.fillText('PAUSED', GAME_WIDTH / 2, GAME_HEIGHT / 2);
 
-            ctx.font = '20px "Courier New"';
+            ctx.font = '18px Orbitron';
             ctx.fillStyle = '#ffffff';
-            ctx.fillText('Press ESC or SPACE to resume', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 50);
+            ctx.fillText('Press SPACE to resume', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 50);
+
+            ctx.font = '16px Orbitron';
+            ctx.fillStyle = COLORS.hudText;
+            ctx.fillText('Press M to return to menu', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 80);
         }
 
         // ===== INITIALIZE GAME =====
@@ -2364,7 +2619,7 @@
         function startNewGame() {
             currentStage = 1;
             score = 0;
-            lives = 3;
+            lives = easterEggMode ? 99 : 3; // 99 lives if Konami code active
             extraLifeThreshold = 10000;
             gameState = 'PLAYING';
             dualFighterActive = false;
@@ -2375,6 +2630,7 @@
 
             bullets = [];
             particles = [];
+            powerUps = [];
         }
 
         // ===== MAIN UPDATE LOOP =====
@@ -2393,11 +2649,19 @@
 
             // State-specific updates
             switch(gameState) {
+                case 'MENU':
+                    // Menu is handled in keydown event
+                    break;
+
                 case 'ATTRACT':
                     attractTimer++;
                     if (keys[' ']) {
-                        startNewGame();
+                        gameState = 'MENU';
                         keys[' '] = false;
+                    }
+                    if (keys['Escape']) {
+                        gameState = 'MENU';
+                        keys['Escape'] = false;
                     }
                     break;
 
@@ -2409,7 +2673,12 @@
                     bullets.forEach(bullet => bullet.update());
                     bullets = bullets.filter(b => b.active);
 
-                    const formationOffset = Math.sin(frameCount * 0.01) * 30;
+                    // Update power-ups
+                    powerUps.forEach(powerUp => powerUp.update());
+                    powerUps = powerUps.filter(p => p.active);
+
+                    // Reduced formation swing from 30 to 20 to keep enemies on screen
+                    const formationOffset = Math.sin(frameCount * 0.01) * 20;
                     enemies.forEach(enemy => enemy.update(formationOffset));
 
                     updateDiveAttacks();
@@ -2437,10 +2706,14 @@
                     break;
 
                 case 'PAUSED':
-                    if (keys['Escape'] || keys[' ']) {
+                    if (keys[' ']) {
                         gameState = 'PLAYING';
-                        keys['Escape'] = false;
                         keys[' '] = false;
+                    }
+                    if (keys['m'] || keys['M']) {
+                        gameState = 'MENU';
+                        keys['m'] = false;
+                        keys['M'] = false;
                     }
                     break;
 
@@ -2453,9 +2726,14 @@
                         }
                     }
                     if (gameOverTimer > 180 && keys[' '] && gameState === 'GAME_OVER') {
-                        gameState = 'ATTRACT';
+                        gameState = 'MENU';
                         gameOverTimer = 0;
                         keys[' '] = false;
+                    }
+                    if (keys['Escape']) {
+                        gameState = 'MENU';
+                        gameOverTimer = 0;
+                        keys['Escape'] = false;
                     }
                     break;
 
@@ -2482,6 +2760,10 @@
 
             // State-specific rendering
             switch(gameState) {
+                case 'MENU':
+                    drawMenu();
+                    break;
+
                 case 'ATTRACT':
                     drawAttractMode();
                     break;
@@ -2496,6 +2778,9 @@
 
                     // Draw bullets
                     bullets.forEach(bullet => bullet.draw());
+
+                    // Draw power-ups
+                    powerUps.forEach(powerUp => powerUp.draw());
 
                     // Draw player
                     if (player) {
@@ -2569,9 +2854,57 @@
             requestAnimationFrame(gameLoop);
         }
 
+        // ===== MENU SELECTION HANDLER =====
+        function handleMenuSelection() {
+            playSound('correct');
+            switch(menuSelection) {
+                case 0: // START GAME
+                    startNewGame();
+                    break;
+                case 1: // VIEW HIGH SCORES
+                    gameState = 'ATTRACT';
+                    break;
+                case 2: // BACK TO HOME
+                    // Navigate back to parent directory
+                    window.location.href = '../';
+                    break;
+            }
+            keys[' '] = false;
+            keys['Enter'] = false;
+        }
+
         // ===== INPUT HANDLING =====
         document.addEventListener('keydown', (e) => {
+            // Konami Code Detection
+            if (konamiCode[konamiProgress] === e.key) {
+                konamiProgress++;
+                if (konamiProgress === konamiCode.length) {
+                    konamiActivated = true;
+                    konamiProgress = 0;
+                    // Activate easter egg mode
+                    easterEggMode = true;
+                    lives = 99;
+                    playSound('extraLife');
+                    console.log('🎮 KONAMI CODE ACTIVATED! 99 Lives Mode!');
+                }
+            } else {
+                konamiProgress = 0;
+            }
+
             keys[e.key] = true;
+
+            // Menu navigation
+            if (gameState === 'MENU') {
+                if (e.key === 'ArrowUp') {
+                    menuSelection = (menuSelection - 1 + menuOptions.length) % menuOptions.length;
+                    playSound('shoot');
+                } else if (e.key === 'ArrowDown') {
+                    menuSelection = (menuSelection + 1) % menuOptions.length;
+                    playSound('shoot');
+                } else if (e.key === ' ' || e.key === 'Enter') {
+                    handleMenuSelection();
+                }
+            }
 
             // Prevent default for game keys
             if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' ', 'Enter', 'Escape'].includes(e.key)) {

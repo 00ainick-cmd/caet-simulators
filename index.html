@@ -175,6 +175,11 @@
         let konamiActivated = false;
         let easterEggMode = false;
 
+        // ===== TIMER MANAGEMENT (prevents memory leaks) =====
+        let respawnTimer = null;
+        let rapidFireTimer = null;
+        let playerHitCooldown = false; // Prevents multiple hits in same frame
+
         // ===== ENTITY ARRAYS =====
         let player = null;
         let capturedShip = null;
@@ -196,8 +201,8 @@
             constructor(x, y, isDual = false) {
                 this.x = x;
                 this.y = y;
-                this.width = 40;
-                this.height = 40;
+                this.width = 32; // Reduced from 40 for better collision detection
+                this.height = 32; // Reduced from 40 for better collision detection
                 this.speed = 5;
                 this.shootCooldown = 0;
                 this.shootCooldownTime = 250; // ms
@@ -205,9 +210,22 @@
                 this.isDual = isDual;
                 this.color = COLORS.player;
                 this.engineGlow = 0;
+
+                // Invincibility system
+                this.invincible = true;
+                this.invincibilityTime = 3000; // 3 seconds of invincibility
+                this.spawnTime = Date.now();
+                this.blinkRate = 100; // Blink every 100ms during invincibility
             }
 
             update(deltaTime) {
+                // Update invincibility
+                if (this.invincible) {
+                    if (Date.now() - this.spawnTime > this.invincibilityTime) {
+                        this.invincible = false;
+                    }
+                }
+
                 // Movement
                 if (keys['ArrowLeft'] && this.x > this.width / 2) {
                     this.x -= this.speed;
@@ -238,6 +256,14 @@
             }
 
             draw() {
+                // Blinking effect during invincibility
+                if (this.invincible) {
+                    const blinkPhase = Math.floor(Date.now() / this.blinkRate) % 2;
+                    if (blinkPhase === 0) {
+                        ctx.globalAlpha = 0.3; // Semi-transparent during blink
+                    }
+                }
+
                 ctx.save();
                 ctx.translate(this.x, this.y);
 
@@ -274,6 +300,9 @@
                 ctx.shadowColor = COLORS.player;
 
                 ctx.restore();
+
+                // Reset alpha after invincibility blink
+                ctx.globalAlpha = 1.0;
             }
         }
 
@@ -358,6 +387,11 @@
                 this.animFrame = 0;
                 this.animSpeed = 0.1;
 
+                // Enemy shooting
+                this.canShoot = Math.random() < 0.3; // 30% of enemies can shoot
+                this.lastShot = Date.now();
+                this.shootCooldown = 2000 + Math.random() * 2000; // 2-4 seconds between shots
+
                 // Set properties based on type
                 this.setupType();
             }
@@ -410,6 +444,19 @@
 
             update(formationOffsetX = 0) {
                 this.animFrame += this.animSpeed;
+
+                // Enemy shooting logic (only during DIVING or FORMATION if in range)
+                if (this.canShoot && player && !player.invincible && (gameState === 'PLAYING' || gameState === 'BONUS')) {
+                    const now = Date.now();
+                    if (now - this.lastShot > this.shootCooldown) {
+                        // Only shoot if in diving state or in formation and player is somewhat aligned
+                        if (this.state === 'DIVING' ||
+                           (this.state === 'FORMATION' && Math.abs(this.x - player.x) < 100)) {
+                            this.shoot();
+                            this.lastShot = now;
+                        }
+                    }
+                }
 
                 switch(this.state) {
                     case 'ENTERING':
@@ -588,6 +635,13 @@
                     this.state = 'LOOPING';
                     this.tractorBeamActive = false;
                     this.shouldUseTractorBeam = false;
+                }
+            }
+
+            shoot() {
+                // Enemy shoots bullet toward player
+                if (player && this.y < GAME_HEIGHT - 50) { // Don't shoot if too low
+                    bullets.push(new Bullet(this.x, this.y + 10, 4, '#ff6600', true));
                 }
             }
 
@@ -1665,20 +1719,31 @@
         // ===== DIVE ATTACK AI =====
         let lastDiveTime = 0;
         function updateDiveAttacks() {
+            // Only attack during active gameplay
+            if (gameState !== 'PLAYING' && gameState !== 'BONUS') {
+                return;
+            }
+
             const now = Date.now();
-            // More frequent dives, scaling with stage
-            const diveFrequency = Math.max(800, 3000 - currentStage * 150);
+            // Better balanced difficulty curve
+            const diveFrequency = Math.max(1500, 4000 - currentStage * 100);
 
             if (now - lastDiveTime > diveFrequency) {
                 const formationEnemies = enemies.filter(e => e.state === 'FORMATION' && e.active);
                 if (formationEnemies.length > 0) {
-                    // Sometimes send 2-3 enemies at once for harder difficulty
-                    const numAttackers = currentStage > 5 ? Math.min(3, Math.floor(Math.random() * 3) + 1) : 1;
+                    // Gradually increase attackers: 1 enemy until stage 5, then 1-2, then 1-3
+                    let maxAttackers = 1;
+                    if (currentStage >= 10) maxAttackers = 3;
+                    else if (currentStage >= 5) maxAttackers = 2;
+
+                    const numAttackers = Math.floor(Math.random() * maxAttackers) + 1;
 
                     for (let i = 0; i < numAttackers && i < formationEnemies.length; i++) {
-                        const randomEnemy = formationEnemies[Math.floor(Math.random() * formationEnemies.length)];
-                        if (randomEnemy.state === 'FORMATION') {
+                        const randomIndex = Math.floor(Math.random() * formationEnemies.length);
+                        const randomEnemy = formationEnemies[randomIndex];
+                        if (randomEnemy && randomEnemy.state === 'FORMATION') {
                             randomEnemy.startDive();
+                            formationEnemies.splice(randomIndex, 1); // Remove from array so we don't pick same enemy
                         }
                     }
                     lastDiveTime = now;
@@ -1688,8 +1753,8 @@
 
         // ===== POWER-UP SPAWNING =====
         function spawnPowerUp(x, y) {
-            // 15% chance to drop a power-up when enemy is destroyed
-            if (Math.random() < 0.15) {
+            // 12% chance to drop a power-up when enemy is destroyed (balanced)
+            if (Math.random() < 0.12) {
                 const types = ['rapid', 'dual', 'life'];
                 const type = types[Math.floor(Math.random() * types.length)];
                 powerUps.push(new PowerUp(x, y, type));
@@ -1730,9 +1795,9 @@
             });
 
             // Enemy collision with player
-            if (player) {
+            if (player && !player.invincible && !playerHitCooldown) {
                 enemies.forEach(enemy => {
-                    if (!enemy.active || !player) return; // Check player exists each iteration
+                    if (!enemy.active || !player || player.invincible || playerHitCooldown) return;
 
                     if (enemy.collidesWith(player)) {
                         // Destroy the enemy too
@@ -1743,8 +1808,8 @@
                         return; // Exit this iteration after player is hit
                     }
 
-                    // Check tractor beam collision (only if player still exists)
-                    if (enemy.tractorBeamActive && !capturedShip && player) {
+                    // Check tractor beam collision (only if player still exists and not invincible)
+                    if (enemy.tractorBeamActive && !capturedShip && player && !player.invincible) {
                         const beamLeft = enemy.x - 25;
                         const beamRight = enemy.x + 25;
                         const beamTop = enemy.y + 20;
@@ -1753,6 +1818,17 @@
                         if (player.x > beamLeft && player.x < beamRight &&
                             player.y > beamTop && player.y < beamBottom) {
                             capturePlayer(enemy);
+                        }
+                    }
+                });
+
+                // Enemy bullet collision with player
+                bullets.forEach(bullet => {
+                    if (bullet.isEnemy && bullet.active && player && !player.invincible && !playerHitCooldown) {
+                        if (bullet.collidesWith(player)) {
+                            bullet.active = false;
+                            createExplosion(player.x, player.y, 15);
+                            playerHit();
                         }
                     }
                 });
@@ -1782,11 +1858,20 @@
                     addFloatingText(player.x, player.y, '+1 LIFE', COLORS.perfect);
                     break;
                 case 'rapid':
+                    // Clear any existing rapid fire timer
+                    if (rapidFireTimer) {
+                        clearTimeout(rapidFireTimer);
+                        rapidFireTimer = null;
+                    }
+
                     player.shootCooldownTime = 150; // Faster shooting
                     addFloatingText(player.x, player.y, 'RAPID FIRE!', COLORS.explosion1);
-                    setTimeout(() => {
+
+                    // Reset after 10 seconds
+                    rapidFireTimer = setTimeout(() => {
                         if (player) player.shootCooldownTime = 250;
-                    }, 10000); // 10 seconds
+                        rapidFireTimer = null;
+                    }, 10000);
                     break;
                 case 'dual':
                     if (!dualFighterActive) {
@@ -1799,11 +1884,25 @@
 
         // ===== PLAYER HIT =====
         function playerHit() {
-            if (!player) return; // Safety check
+            if (!player || playerHitCooldown) return; // Safety check + prevent multiple hits
+
+            // Set cooldown to prevent multiple hits in same frame
+            playerHitCooldown = true;
+            setTimeout(() => { playerHitCooldown = false; }, 100);
+
+            // Clear any existing timers
+            if (respawnTimer) {
+                clearTimeout(respawnTimer);
+                respawnTimer = null;
+            }
+            if (rapidFireTimer) {
+                clearTimeout(rapidFireTimer);
+                rapidFireTimer = null;
+            }
 
             lives--;
             createExplosion(player.x, player.y, 30);
-            playSound('explosion'); // Play explosion sound
+            playSound('explosion');
 
             if (dualFighterActive) {
                 dualFighterActive = false;
@@ -1814,18 +1913,29 @@
                 player = null;
             } else {
                 // Respawn player after delay
-                player = null; // Remove player immediately
-                setTimeout(() => {
+                player = null;
+                respawnTimer = setTimeout(() => {
                     if (gameState === 'PLAYING' || gameState === 'BONUS') {
                         player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
                     }
+                    respawnTimer = null; // Clear reference
                 }, 2000);
             }
         }
 
         // ===== CAPTURE MECHANICS =====
         function capturePlayer(capturingBoss) {
-            if (!player) return; // Safety check
+            if (!player || playerHitCooldown) return; // Safety check + prevent multiple captures
+
+            // Set cooldown
+            playerHitCooldown = true;
+            setTimeout(() => { playerHitCooldown = false; }, 100);
+
+            // Clear existing respawn timer
+            if (respawnTimer) {
+                clearTimeout(respawnTimer);
+                respawnTimer = null;
+            }
 
             playSound('tractorBeam');
             capturedShip = {
@@ -1841,12 +1951,13 @@
             }
 
             // Respawn player after delay
-            setTimeout(() => {
+            player = null;
+            respawnTimer = setTimeout(() => {
                 if (gameState === 'PLAYING') {
                     player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
                 }
+                respawnTimer = null;
             }, 2000);
-            player = null;
         }
 
         function rescueCapturedShip() {

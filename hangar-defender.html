@@ -1,0 +1,1918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HANGAR DEFENDER - Aviation CAET Study Game</title>
+    <style>
+        /* ===== SEGA GENESIS AESTHETIC ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            background: #0a0a2e;
+            border: 4px solid #00ff41;
+            box-shadow: 0 0 20px #00ff41, inset 0 0 40px rgba(0, 255, 65, 0.1);
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+
+        /* CRT Scanlines Effect */
+        #gameContainer::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0) 0px,
+                rgba(0, 0, 0, 0) 1px,
+                rgba(0, 0, 0, 0.5) 1px,
+                rgba(0, 0, 0, 0.5) 2px
+            );
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* CRT Screen Curvature */
+        #gameContainer::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(ellipse at center,
+                rgba(0, 0, 0, 0) 0%,
+                rgba(0, 0, 0, 0.3) 100%);
+            pointer-events: none;
+            z-index: 11;
+        }
+
+        /* Glow effect for high-contrast elements */
+        .glow {
+            text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+        }
+
+        /* Loading screen */
+        #loadingScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0a0a2e;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #00ff41;
+            font-size: 24px;
+            z-index: 100;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .blink {
+            animation: blink 1s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="loadingScreen">
+            <div class="glow">HANGAR DEFENDER</div>
+            <div style="margin-top: 20px; font-size: 16px;">INITIALIZING SYSTEMS...</div>
+            <div class="blink" style="margin-top: 20px; font-size: 14px;">PRESS SPACE TO START</div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // HANGAR DEFENDER - GALAGA CLONE
+        // Aviation CAET Study Game
+        // Sega Genesis Aesthetic
+        // ============================================
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const loadingScreen = document.getElementById('loadingScreen');
+
+        // ===== GAME CONSTANTS =====
+        const GAME_WIDTH = 800;
+        const GAME_HEIGHT = 600;
+        const FPS = 60;
+        const FRAME_TIME = 1000 / FPS;
+
+        // ===== COLOR PALETTE (16-BIT SEGA GENESIS) =====
+        const COLORS = {
+            background: '#0a0a2e',
+            player: '#00ffff',
+            boss: '#3366ff',
+            butterfly: '#ff3366',
+            dragonfly: '#33ff66',
+            bee: '#ffff33',
+            bullet: '#00ff00',
+            tractorBeam: '#66ccff',
+            hudText: '#00ff41',
+            explosion1: '#ff6600',
+            explosion2: '#ffff00',
+            explosion3: '#ffffff',
+            scoreBonus: '#ffff00',
+            warning: '#ff0000',
+            perfect: '#ff00ff'
+        };
+
+        // ===== GAME STATE =====
+        let gameState = 'ATTRACT'; // ATTRACT, PLAYING, PAUSED, GAME_OVER, QUESTIONS, BONUS, NAME_ENTRY
+        let currentStage = 1;
+        let score = 0;
+        let highScore = 0;
+        let lives = 3;
+        let extraLifeThreshold = 10000;
+        let lastFrameTime = 0;
+        let keys = {};
+        let frameCount = 0;
+
+        // ===== ENTITY ARRAYS =====
+        let player = null;
+        let capturedShip = null;
+        let dualFighterActive = false;
+        let enemies = [];
+        let bullets = [];
+        let particles = [];
+        let stars = [];
+
+        // ===== GAME SETTINGS =====
+        let settings = {
+            soundEnabled: true,
+            musicEnabled: true
+        };
+
+        // ===== PLAYER CLASS =====
+        class Player {
+            constructor(x, y, isDual = false) {
+                this.x = x;
+                this.y = y;
+                this.width = 40;
+                this.height = 40;
+                this.speed = 5;
+                this.shootCooldown = 0;
+                this.shootCooldownTime = 250; // ms
+                this.lastShot = 0;
+                this.isDual = isDual;
+                this.color = COLORS.player;
+                this.engineGlow = 0;
+            }
+
+            update(deltaTime) {
+                // Movement
+                if (keys['ArrowLeft'] && this.x > this.width / 2) {
+                    this.x -= this.speed;
+                }
+                if (keys['ArrowRight'] && this.x < GAME_WIDTH - this.width / 2) {
+                    this.x += this.speed;
+                }
+
+                // Shooting
+                if ((keys[' '] || keys['Enter']) && Date.now() - this.lastShot > this.shootCooldownTime) {
+                    this.shoot();
+                    this.lastShot = Date.now();
+                    playSound('shoot');
+                }
+
+                // Engine glow animation
+                this.engineGlow = (this.engineGlow + 0.1) % (Math.PI * 2);
+            }
+
+            shoot() {
+                if (this.isDual) {
+                    // Dual fighter shoots two bullets
+                    bullets.push(new Bullet(this.x - 15, this.y - 20));
+                    bullets.push(new Bullet(this.x + 15, this.y - 20));
+                } else {
+                    bullets.push(new Bullet(this.x, this.y - 20));
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Draw player ship (classic fighter jet from top-down view)
+                // Body
+                ctx.fillStyle = COLORS.player;
+                ctx.beginPath();
+                ctx.moveTo(0, -20); // Nose
+                ctx.lineTo(-8, 0); // Left wing
+                ctx.lineTo(-6, 10); // Left tail
+                ctx.lineTo(6, 10); // Right tail
+                ctx.lineTo(8, 0); // Right wing
+                ctx.closePath();
+                ctx.fill();
+
+                // Cockpit
+                ctx.fillStyle = '#ffff33';
+                ctx.beginPath();
+                ctx.arc(0, -5, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Engine glow
+                const glowAlpha = 0.5 + Math.sin(this.engineGlow) * 0.3;
+                ctx.fillStyle = `rgba(0, 255, 255, ${glowAlpha})`;
+                ctx.beginPath();
+                ctx.arc(-6, 10, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(6, 10, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Glow effect
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = COLORS.player;
+
+                ctx.restore();
+            }
+        }
+
+        // ===== BULLET CLASS =====
+        class Bullet {
+            constructor(x, y, speed = 8, color = COLORS.bullet, isEnemy = false) {
+                this.x = x;
+                this.y = y;
+                this.width = 4;
+                this.height = 12;
+                this.speed = speed;
+                this.color = color;
+                this.isEnemy = isEnemy;
+                this.active = true;
+            }
+
+            update() {
+                if (this.isEnemy) {
+                    this.y += this.speed;
+                } else {
+                    this.y -= this.speed;
+                }
+
+                // Remove if off screen
+                if (this.y < 0 || this.y > GAME_HEIGHT) {
+                    this.active = false;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = this.color;
+                ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
+                ctx.shadowBlur = 0;
+            }
+
+            collidesWith(entity) {
+                return this.x < entity.x + entity.width / 2 &&
+                       this.x > entity.x - entity.width / 2 &&
+                       this.y < entity.y + entity.height / 2 &&
+                       this.y > entity.y - entity.height / 2;
+            }
+        }
+
+        // ===== ENEMY CLASS =====
+        class Enemy {
+            constructor(type, formationX, formationY, gridX, gridY) {
+                this.type = type; // 'boss', 'butterfly', 'dragonfly', 'bee'
+                this.formationX = formationX;
+                this.formationY = formationY;
+                this.gridX = gridX;
+                this.gridY = gridY;
+                this.x = formationX;
+                this.y = -50; // Start above screen
+                this.vx = 0;
+                this.vy = 0;
+                this.state = 'ENTERING'; // ENTERING, FORMATION, DIVING, RETURNING
+                this.active = true;
+                this.diving = false;
+                this.diveProgress = 0;
+                this.divePattern = null;
+                this.capturedShip = null;
+                this.tractorBeamActive = false;
+                this.tractorBeamProgress = 0;
+                this.animFrame = 0;
+                this.animSpeed = 0.1;
+
+                // Set properties based on type
+                this.setupType();
+            }
+
+            setupType() {
+                switch(this.type) {
+                    case 'boss':
+                        this.width = 40;
+                        this.height = 40;
+                        this.color = COLORS.boss;
+                        this.pointsFormation = 150;
+                        this.pointsDiving = 400;
+                        break;
+                    case 'butterfly':
+                        this.width = 32;
+                        this.height = 32;
+                        this.color = COLORS.butterfly;
+                        this.pointsFormation = 80;
+                        this.pointsDiving = 160;
+                        break;
+                    case 'dragonfly':
+                        this.width = 30;
+                        this.height = 30;
+                        this.color = COLORS.dragonfly;
+                        this.pointsFormation = 100;
+                        this.pointsDiving = 160;
+                        break;
+                    case 'bee':
+                        this.width = 24;
+                        this.height = 24;
+                        this.color = COLORS.bee;
+                        this.pointsFormation = 50;
+                        this.pointsDiving = 100;
+                        break;
+                }
+            }
+
+            update(formationOffsetX = 0) {
+                this.animFrame += this.animSpeed;
+
+                switch(this.state) {
+                    case 'ENTERING':
+                        // Move to formation position
+                        const dx = this.formationX + formationOffsetX - this.x;
+                        const dy = this.formationY - this.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+
+                        if (dist < 5) {
+                            this.state = 'FORMATION';
+                            this.x = this.formationX + formationOffsetX;
+                            this.y = this.formationY;
+                        } else {
+                            this.x += dx * 0.05;
+                            this.y += dy * 0.05;
+                        }
+                        break;
+
+                    case 'FORMATION':
+                        // Idle in formation with slow horizontal movement
+                        this.x = this.formationX + formationOffsetX;
+                        break;
+
+                    case 'DIVING':
+                        this.executeDive();
+                        break;
+
+                    case 'RETURNING':
+                        // Return to formation
+                        const rdx = this.formationX + formationOffsetX - this.x;
+                        const rdy = this.formationY - this.y;
+                        const rdist = Math.sqrt(rdx * rdx + rdy * rdy);
+
+                        if (rdist < 5) {
+                            this.state = 'FORMATION';
+                            this.diving = false;
+                        } else {
+                            this.x += rdx * 0.03;
+                            this.y += rdy * 0.03;
+                        }
+                        break;
+                }
+
+                // Update tractor beam
+                if (this.tractorBeamActive) {
+                    this.tractorBeamProgress += 0.1;
+                    if (this.tractorBeamProgress > 1.5) {
+                        this.tractorBeamActive = false;
+                        this.tractorBeamProgress = 0;
+                    }
+                }
+            }
+
+            startDive() {
+                if (this.state === 'FORMATION' && !this.diving) {
+                    this.state = 'DIVING';
+                    this.diving = true;
+                    this.diveProgress = 0;
+
+                    // Boss has chance to activate tractor beam
+                    if (this.type === 'boss' && Math.random() < 0.25) {
+                        this.tractorBeamActive = true;
+                        playSound('tractorBeam');
+                    }
+                }
+            }
+
+            executeDive() {
+                this.diveProgress += 0.02;
+
+                const centerX = GAME_WIDTH / 2;
+                const centerY = GAME_HEIGHT / 2;
+
+                switch(this.type) {
+                    case 'boss':
+                        // Gentle arc toward player
+                        const t = this.diveProgress;
+                        this.x = this.formationX + Math.sin(t * Math.PI) * 150;
+                        this.y = this.formationY + t * 400;
+                        break;
+
+                    case 'butterfly':
+                        // Figure-8 swoop
+                        const bt = this.diveProgress * Math.PI * 2;
+                        this.x = this.formationX + Math.sin(bt) * 100;
+                        this.y = this.formationY + this.diveProgress * 350 + Math.sin(bt * 2) * 50;
+                        break;
+
+                    case 'bee':
+                        // Fast straight dive
+                        this.y = this.formationY + this.diveProgress * 500;
+                        this.x += (player.x - this.x) * 0.01;
+                        break;
+
+                    case 'dragonfly':
+                        // Wide looping pattern
+                        const dt = this.diveProgress * Math.PI;
+                        this.x = this.formationX + Math.cos(dt) * 120;
+                        this.y = this.formationY + this.diveProgress * 380;
+                        break;
+                }
+
+                // Check if dive complete
+                if (this.diveProgress >= 1 || this.y > GAME_HEIGHT + 50) {
+                    this.state = 'RETURNING';
+                    this.tractorBeamActive = false;
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Draw enemy based on type
+                switch(this.type) {
+                    case 'boss':
+                        this.drawBoss();
+                        break;
+                    case 'butterfly':
+                        this.drawButterfly();
+                        break;
+                    case 'dragonfly':
+                        this.drawDragonfly();
+                        break;
+                    case 'bee':
+                        this.drawBee();
+                        break;
+                }
+
+                // Draw tractor beam if active
+                if (this.tractorBeamActive) {
+                    this.drawTractorBeam();
+                }
+
+                ctx.restore();
+
+                // Draw captured ship if exists
+                if (this.capturedShip) {
+                    ctx.save();
+                    ctx.translate(this.x, this.y + 50);
+                    ctx.globalAlpha = 0.7;
+                    this.drawCapturedShip();
+                    ctx.restore();
+                }
+            }
+
+            drawBoss() {
+                // Large bug with circuit board pattern
+                const wingSpan = Math.sin(this.animFrame) * 3;
+
+                ctx.fillStyle = this.color;
+                // Body
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 15, 20, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Wings
+                ctx.beginPath();
+                ctx.ellipse(-12 - wingSpan, -5, 8, 15, -0.3, 0, Math.PI * 2);
+                ctx.ellipse(12 + wingSpan, -5, 8, 15, 0.3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Circuit pattern
+                ctx.strokeStyle = '#66ccff';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(-8, -10);
+                ctx.lineTo(8, -10);
+                ctx.moveTo(0, -10);
+                ctx.lineTo(0, 10);
+                ctx.stroke();
+
+                // Eyes
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(-5, -5, 3, 0, Math.PI * 2);
+                ctx.arc(5, -5, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawButterfly() {
+                // Medium alien with spread wings
+                const wingFlap = Math.sin(this.animFrame) * 4;
+
+                ctx.fillStyle = this.color;
+                // Body
+                ctx.fillRect(-4, -10, 8, 20);
+
+                // Wings
+                ctx.beginPath();
+                ctx.moveTo(-4, 0);
+                ctx.quadraticCurveTo(-15 - wingFlap, -10, -12 - wingFlap, -18);
+                ctx.quadraticCurveTo(-8, -15, -4, -5);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(4, 0);
+                ctx.quadraticCurveTo(15 + wingFlap, -10, 12 + wingFlap, -18);
+                ctx.quadraticCurveTo(8, -15, 4, -5);
+                ctx.fill();
+
+                // Wire traces
+                ctx.strokeStyle = '#ff6699';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(-10, -15);
+                ctx.lineTo(10, -15);
+                ctx.stroke();
+            }
+
+            drawDragonfly() {
+                // Elongated body with antenna
+                ctx.fillStyle = this.color;
+
+                // Body segments
+                for (let i = 0; i < 4; i++) {
+                    ctx.beginPath();
+                    ctx.arc(0, -10 + i * 6, 6 - i * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Wings
+                const wingAngle = Math.sin(this.animFrame) * 0.2;
+                ctx.save();
+                ctx.rotate(wingAngle);
+                ctx.fillStyle = 'rgba(51, 255, 102, 0.5)';
+                ctx.fillRect(-15, -8, 10, 3);
+                ctx.fillRect(5, -8, 10, 3);
+                ctx.restore();
+
+                // Antenna
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-3, -12);
+                ctx.lineTo(-5, -18);
+                ctx.moveTo(3, -12);
+                ctx.lineTo(5, -18);
+                ctx.stroke();
+            }
+
+            drawBee() {
+                // Small compact wasp
+                ctx.fillStyle = this.color;
+
+                // Body
+                ctx.beginPath();
+                ctx.arc(0, 0, 8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Stripes
+                ctx.fillStyle = '#000';
+                ctx.fillRect(-8, -2, 16, 2);
+                ctx.fillRect(-8, 2, 16, 2);
+
+                // Stinger
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.moveTo(-3, 8);
+                ctx.lineTo(0, 12);
+                ctx.lineTo(3, 8);
+                ctx.fill();
+
+                // Wings (subtle)
+                const wingBuzz = Math.sin(this.animFrame * 2) * 2;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.beginPath();
+                ctx.ellipse(-6, -3 + wingBuzz, 4, 6, -0.5, 0, Math.PI * 2);
+                ctx.ellipse(6, -3 + wingBuzz, 4, 6, 0.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawTractorBeam() {
+                const beamWidth = 50;
+                const beamHeight = 200;
+                const pulse = Math.sin(this.tractorBeamProgress * 10) * 0.3 + 0.7;
+
+                ctx.save();
+                ctx.globalAlpha = 0.5 * pulse;
+
+                // Beam gradient
+                const gradient = ctx.createLinearGradient(0, 0, 0, beamHeight);
+                gradient.addColorStop(0, COLORS.tractorBeam);
+                gradient.addColorStop(1, 'rgba(102, 204, 255, 0)');
+
+                ctx.fillStyle = gradient;
+                ctx.fillRect(-beamWidth / 2, 20, beamWidth, beamHeight);
+
+                // Beam particles
+                for (let i = 0; i < 10; i++) {
+                    const py = 20 + (this.tractorBeamProgress * beamHeight + i * 20) % beamHeight;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(Math.sin(i) * 20, py, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+            }
+
+            drawCapturedShip() {
+                // Draw mini player ship
+                ctx.fillStyle = COLORS.player;
+                ctx.globalAlpha = 0.6;
+                ctx.beginPath();
+                ctx.moveTo(0, -10);
+                ctx.lineTo(-4, 0);
+                ctx.lineTo(-3, 5);
+                ctx.lineTo(3, 5);
+                ctx.lineTo(4, 0);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            collidesWith(entity) {
+                return Math.abs(this.x - entity.x) < (this.width + entity.width) / 2 &&
+                       Math.abs(this.y - entity.y) < (this.height + entity.height) / 2;
+            }
+        }
+
+        // ===== PARTICLE CLASS =====
+        class Particle {
+            constructor(x, y, color, vx, vy, life = 30) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.vx = vx;
+                this.vy = vy;
+                this.life = life;
+                this.maxLife = life;
+                this.size = 3;
+                this.active = true;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+                if (this.life <= 0) this.active = false;
+            }
+
+            draw() {
+                const alpha = this.life / this.maxLife;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // ===== STAR FIELD =====
+        class Star {
+            constructor() {
+                this.x = Math.random() * GAME_WIDTH;
+                this.y = Math.random() * GAME_HEIGHT;
+                this.size = Math.random() * 2 + 1;
+                this.speed = this.size * 0.5; // Parallax based on size
+                this.brightness = Math.random() * 0.5 + 0.5;
+                this.twinkle = Math.random() * Math.PI * 2;
+            }
+
+            update() {
+                this.y += this.speed;
+                if (this.y > GAME_HEIGHT) {
+                    this.y = 0;
+                    this.x = Math.random() * GAME_WIDTH;
+                }
+                this.twinkle += 0.05;
+            }
+
+            draw() {
+                const alpha = this.brightness + Math.sin(this.twinkle) * 0.2;
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = this.size > 2 ? '#66ccff' : '#ffffff';
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // ===== CAET QUESTION BANK =====
+        const caetQuestions = {
+            basicElectricity: [
+                {
+                    question: "What is the unit of electrical resistance?",
+                    answers: ["Ohm", "Ampere", "Volt", "Watt"],
+                    correct: 0
+                },
+                {
+                    question: "What does AC stand for in electrical systems?",
+                    answers: ["Automatic Current", "Alternating Current", "Active Circuit", "Adjusted Current"],
+                    correct: 1
+                },
+                {
+                    question: "In Ohm's Law, V = I × R, what does 'I' represent?",
+                    answers: ["Impedance", "Current", "Induction", "Voltage"],
+                    correct: 1
+                },
+                {
+                    question: "What is the standard frequency of AC power in the USA?",
+                    answers: ["50 Hz", "60 Hz", "100 Hz", "120 Hz"],
+                    correct: 1
+                },
+                {
+                    question: "What color wire is typically used for ground in aircraft?",
+                    answers: ["Red", "Black", "Green", "White"],
+                    correct: 2
+                },
+                {
+                    question: "What is a megohm?",
+                    answers: ["1,000 ohms", "100,000 ohms", "1,000,000 ohms", "10,000 ohms"],
+                    correct: 2
+                },
+                {
+                    question: "In a series circuit, what remains constant?",
+                    answers: ["Voltage", "Current", "Resistance", "Power"],
+                    correct: 1
+                },
+                {
+                    question: "What is the voltage of a standard aircraft battery?",
+                    answers: ["12V", "24V", "28V", "48V"],
+                    correct: 2
+                },
+                {
+                    question: "What does DC stand for?",
+                    answers: ["Direct Current", "Divided Current", "Dual Circuit", "Dynamic Current"],
+                    correct: 0
+                },
+                {
+                    question: "What instrument measures electrical current?",
+                    answers: ["Voltmeter", "Ohmmeter", "Ammeter", "Wattmeter"],
+                    correct: 2
+                }
+            ],
+            digitalLogic: [
+                {
+                    question: "What logic gate outputs HIGH only when all inputs are HIGH?",
+                    answers: ["OR", "AND", "NAND", "XOR"],
+                    correct: 1
+                },
+                {
+                    question: "Convert binary 1010 to decimal:",
+                    answers: ["8", "10", "12", "16"],
+                    correct: 1
+                },
+                {
+                    question: "What does XOR gate stand for?",
+                    answers: ["Extreme OR", "Exclusive OR", "Extra OR", "Extended OR"],
+                    correct: 1
+                },
+                {
+                    question: "In binary, what is 1111?",
+                    answers: ["15", "16", "14", "31"],
+                    correct: 0
+                },
+                {
+                    question: "What gate inverts its input?",
+                    answers: ["AND", "OR", "NOT", "NAND"],
+                    correct: 2
+                },
+                {
+                    question: "Convert hexadecimal F to decimal:",
+                    answers: ["10", "12", "14", "15"],
+                    correct: 3
+                },
+                {
+                    question: "What is the output of NAND gate when both inputs are HIGH?",
+                    answers: ["HIGH", "LOW", "Undefined", "Floating"],
+                    correct: 1
+                },
+                {
+                    question: "How many bits in a byte?",
+                    answers: ["4", "8", "16", "32"],
+                    correct: 1
+                },
+                {
+                    question: "What is binary 0001 in decimal?",
+                    answers: ["0", "1", "2", "8"],
+                    correct: 1
+                },
+                {
+                    question: "OR gate outputs HIGH when:",
+                    answers: ["All inputs LOW", "Any input HIGH", "All inputs HIGH", "Inputs are equal"],
+                    correct: 1
+                }
+            ],
+            communication: [
+                {
+                    question: "What does VOR stand for?",
+                    answers: ["Very Omni Range", "VHF Omnidirectional Range", "Visual Omni Radar", "Vertical Orientation Radio"],
+                    correct: 1
+                },
+                {
+                    question: "What frequency range does VHF use?",
+                    answers: ["3-30 MHz", "30-300 MHz", "300-3000 MHz", "3-30 GHz"],
+                    correct: 1
+                },
+                {
+                    question: "What is the data rate of ARINC 429?",
+                    answers: ["12.5 kbps", "100 kbps", "1 Mbps", "10 Mbps"],
+                    correct: 1
+                },
+                {
+                    question: "What does ILS stand for?",
+                    answers: ["Internal Landing System", "Instrument Landing System", "International Landing Standard", "Integrated Location System"],
+                    correct: 1
+                },
+                {
+                    question: "What does a transponder do?",
+                    answers: ["Sends weather data", "Transmits aircraft identity", "Controls autopilot", "Navigates routes"],
+                    correct: 1
+                },
+                {
+                    question: "What is the frequency of aircraft emergency locator (ELT)?",
+                    answers: ["121.5 MHz", "243 MHz", "Both A and B", "406 MHz"],
+                    correct: 2
+                },
+                {
+                    question: "GPS operates in which frequency band?",
+                    answers: ["VHF", "UHF", "L-band", "S-band"],
+                    correct: 2
+                },
+                {
+                    question: "ARINC 629 is a:",
+                    answers: ["Point-to-point", "Data bus", "Radio frequency", "Power system"],
+                    correct: 1
+                },
+                {
+                    question: "What does TCAS stand for?",
+                    answers: ["Traffic Control Air System", "Traffic Collision Avoidance System", "Terminal Control Aviation System", "Transponder Communication Air Service"],
+                    correct: 1
+                },
+                {
+                    question: "DME measures:",
+                    answers: ["Direction", "Distance", "Altitude", "Speed"],
+                    correct: 1
+                }
+            ],
+            maintenance: [
+                {
+                    question: "What does AWG stand for in wire sizing?",
+                    answers: ["Aircraft Wire Gauge", "American Wire Gauge", "Aviation Wire Grade", "Approved Wire Guide"],
+                    correct: 1
+                },
+                {
+                    question: "Higher AWG number means:",
+                    answers: ["Thicker wire", "Thinner wire", "More insulation", "Higher voltage"],
+                    correct: 1
+                },
+                {
+                    question: "What regulation covers aircraft maintenance?",
+                    answers: ["FAR Part 43", "FAR Part 91", "FAR Part 121", "FAR Part 135"],
+                    correct: 0
+                },
+                {
+                    question: "What does AMM stand for?",
+                    answers: ["Aircraft Maintenance Manual", "Aviation Mechanic Manual", "Approved Maintenance Method", "Airframe Maintenance Manual"],
+                    correct: 0
+                },
+                {
+                    question: "Torque is measured in:",
+                    answers: ["PSI", "Pounds", "Foot-pounds", "Newtons"],
+                    correct: 2
+                },
+                {
+                    question: "Safety wire should be twisted how many times per inch?",
+                    answers: ["2-4", "4-6", "6-8", "8-10"],
+                    correct: 3
+                },
+                {
+                    question: "What color is hydraulic fluid (MIL-H-5606)?",
+                    answers: ["Green", "Red", "Blue", "Purple"],
+                    correct: 1
+                },
+                {
+                    question: "When must an A&P logbook entry be made?",
+                    answers: ["Daily", "Weekly", "After maintenance", "Monthly"],
+                    correct: 2
+                },
+                {
+                    question: "What is the standard torque pattern for bolts?",
+                    answers: ["Clockwise spiral", "Star pattern", "Sequential", "Random"],
+                    correct: 1
+                },
+                {
+                    question: "Which tool measures wire resistance?",
+                    answers: ["Multimeter", "Torque wrench", "Micrometer", "Caliper"],
+                    correct: 0
+                }
+            ]
+        };
+
+        // ===== SOUND SYSTEM (Web Audio API) =====
+        let audioContext = null;
+        let soundBuffers = {};
+
+        function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            } catch(e) {
+                console.log('Web Audio API not supported');
+            }
+        }
+
+        function playSound(soundName) {
+            if (!settings.soundEnabled || !audioContext) return;
+
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            // Different sounds for different events
+            switch(soundName) {
+                case 'shoot':
+                    oscillator.frequency.value = 800;
+                    oscillator.type = 'square';
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.1);
+                    break;
+
+                case 'explosion':
+                    oscillator.frequency.value = 200;
+                    oscillator.type = 'sawtooth';
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.3);
+                    break;
+
+                case 'tractorBeam':
+                    oscillator.frequency.value = 150;
+                    oscillator.type = 'sine';
+                    oscillator.frequency.exponentialRampToValueAtTime(100, audioContext.currentTime + 1);
+                    gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 1);
+                    break;
+
+                case 'extraLife':
+                    oscillator.frequency.value = 1200;
+                    oscillator.type = 'sine';
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.2);
+                    break;
+
+                case 'correct':
+                    oscillator.frequency.value = 1000;
+                    oscillator.type = 'sine';
+                    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.15);
+                    break;
+
+                case 'wrong':
+                    oscillator.frequency.value = 300;
+                    oscillator.type = 'sawtooth';
+                    gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.4);
+                    break;
+            }
+        }
+
+        // ===== EXPLOSION EFFECT =====
+        function createExplosion(x, y, size = 20) {
+            playSound('explosion');
+
+            // Create particle burst
+            const particleCount = size;
+            for (let i = 0; i < particleCount; i++) {
+                const angle = (Math.PI * 2 * i) / particleCount;
+                const speed = Math.random() * 3 + 2;
+                const vx = Math.cos(angle) * speed;
+                const vy = Math.sin(angle) * speed;
+                const colors = [COLORS.explosion1, COLORS.explosion2, COLORS.explosion3];
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                particles.push(new Particle(x, y, color, vx, vy, 30 + Math.random() * 20));
+            }
+        }
+
+        // ===== FORMATION SYSTEM =====
+        function createFormation(stage) {
+            enemies = [];
+            const formationStartY = 100;
+            const spacingX = 60;
+            const spacingY = 50;
+            const formationStartX = GAME_WIDTH / 2 - (4 * spacingX) / 2;
+
+            // Row 1: Bosses
+            const bossCount = stage >= 10 ? 6 : 4;
+            for (let i = 0; i < bossCount; i++) {
+                const x = formationStartX + i * spacingX;
+                const y = formationStartY;
+                enemies.push(new Enemy('boss', x, y, i, 0));
+            }
+
+            // Row 2: Butterflies
+            for (let i = 0; i < 6; i++) {
+                const x = formationStartX + i * spacingX;
+                const y = formationStartY + spacingY;
+                enemies.push(new Enemy('butterfly', x, y, i, 1));
+            }
+
+            // Row 3: Dragonflies
+            for (let i = 0; i < 6; i++) {
+                const x = formationStartX + i * spacingX;
+                const y = formationStartY + spacingY * 2;
+                enemies.push(new Enemy('dragonfly', x, y, i, 2));
+            }
+
+            // Rows 4-5: Bees
+            for (let row = 0; row < 2; row++) {
+                for (let i = 0; i < 8; i++) {
+                    const x = formationStartX - spacingX + i * spacingX;
+                    const y = formationStartY + spacingY * (3 + row);
+                    enemies.push(new Enemy('bee', x, y, i, 3 + row));
+                }
+            }
+        }
+
+        // ===== DIVE ATTACK AI =====
+        let lastDiveTime = 0;
+        function updateDiveAttacks() {
+            const now = Date.now();
+            const diveFrequency = Math.max(1000, 4000 - currentStage * 100);
+
+            if (now - lastDiveTime > diveFrequency) {
+                const formationEnemies = enemies.filter(e => e.state === 'FORMATION' && e.active);
+                if (formationEnemies.length > 0) {
+                    const randomEnemy = formationEnemies[Math.floor(Math.random() * formationEnemies.length)];
+                    randomEnemy.startDive();
+                    lastDiveTime = now;
+                }
+            }
+        }
+
+        // ===== COLLISION DETECTION =====
+        function checkCollisions() {
+            // Player bullets vs enemies
+            bullets.forEach(bullet => {
+                if (!bullet.active || bullet.isEnemy) return;
+
+                enemies.forEach(enemy => {
+                    if (!enemy.active) return;
+
+                    if (bullet.collidesWith(enemy)) {
+                        bullet.active = false;
+                        enemy.active = false;
+
+                        // Award points
+                        const points = enemy.diving ? enemy.pointsDiving : enemy.pointsFormation;
+                        const multiplier = dualFighterActive ? 1.5 : 1;
+                        addScore(Math.floor(points * multiplier));
+
+                        // Check if enemy had captured ship
+                        if (enemy.capturedShip) {
+                            // Rescue!
+                            rescueCapturedShip();
+                            addScore(1000);
+                        }
+
+                        createExplosion(enemy.x, enemy.y, 20);
+                    }
+                });
+            });
+
+            // Enemy collision with player
+            if (player) {
+                enemies.forEach(enemy => {
+                    if (!enemy.active) return;
+
+                    if (enemy.collidesWith(player)) {
+                        playerHit();
+                    }
+
+                    // Check tractor beam collision
+                    if (enemy.tractorBeamActive && !capturedShip) {
+                        const beamLeft = enemy.x - 25;
+                        const beamRight = enemy.x + 25;
+                        const beamTop = enemy.y + 20;
+                        const beamBottom = enemy.y + 220;
+
+                        if (player.x > beamLeft && player.x < beamRight &&
+                            player.y > beamTop && player.y < beamBottom) {
+                            capturePlayer(enemy);
+                        }
+                    }
+                });
+            }
+        }
+
+        // ===== PLAYER HIT =====
+        function playerHit() {
+            lives--;
+            createExplosion(player.x, player.y, 30);
+
+            if (dualFighterActive) {
+                dualFighterActive = false;
+            }
+
+            if (lives <= 0) {
+                gameState = 'GAME_OVER';
+                player = null;
+            } else {
+                // Respawn player
+                setTimeout(() => {
+                    if (gameState === 'PLAYING') {
+                        player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
+                    }
+                }, 2000);
+                player = null;
+            }
+        }
+
+        // ===== CAPTURE MECHANICS =====
+        function capturePlayer(capturingBoss) {
+            playSound('tractorBeam');
+            capturedShip = {
+                boss: capturingBoss,
+                x: player.x,
+                y: player.y
+            };
+            capturingBoss.capturedShip = capturedShip;
+
+            lives--;
+            if (lives <= 0) {
+                gameState = 'GAME_OVER';
+            }
+
+            // Respawn player after delay
+            setTimeout(() => {
+                if (gameState === 'PLAYING') {
+                    player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
+                }
+            }, 2000);
+            player = null;
+        }
+
+        function rescueCapturedShip() {
+            if (capturedShip) {
+                dualFighterActive = true;
+                capturedShip = null;
+                playSound('extraLife');
+            }
+        }
+
+        // ===== SCORE SYSTEM =====
+        function addScore(points) {
+            score += points;
+
+            // Check for extra life
+            if (score >= extraLifeThreshold) {
+                extraLifeThreshold += 10000;
+                if (lives < 5) {
+                    lives++;
+                    playSound('extraLife');
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2, '+1 LIFE', COLORS.scoreBonus);
+                }
+            }
+
+            // Update high score
+            if (score > highScore) {
+                highScore = score;
+                saveHighScore();
+            }
+        }
+
+        // ===== FLOATING TEXT =====
+        let floatingTexts = [];
+        function showFloatingText(x, y, text, color) {
+            floatingTexts.push({
+                x: x,
+                y: y,
+                text: text,
+                color: color,
+                life: 60,
+                vy: -1
+            });
+        }
+
+        function updateFloatingTexts() {
+            floatingTexts.forEach(ft => {
+                ft.y += ft.vy;
+                ft.life--;
+            });
+            floatingTexts = floatingTexts.filter(ft => ft.life > 0);
+        }
+
+        function drawFloatingTexts() {
+            floatingTexts.forEach(ft => {
+                ctx.globalAlpha = ft.life / 60;
+                ctx.fillStyle = ft.color;
+                ctx.font = 'bold 20px "Courier New"';
+                ctx.textAlign = 'center';
+                ctx.fillText(ft.text, ft.x, ft.y);
+                ctx.globalAlpha = 1;
+            });
+        }
+
+        // ===== LOCAL STORAGE =====
+        function saveHighScore() {
+            localStorage.setItem('hangarDefender_highScore', highScore);
+        }
+
+        function loadHighScore() {
+            const saved = localStorage.getItem('hangarDefender_highScore');
+            if (saved) {
+                highScore = parseInt(saved);
+            }
+        }
+
+        // ===== DRAW HUD =====
+        function drawHUD() {
+            ctx.fillStyle = COLORS.hudText;
+            ctx.font = 'bold 18px "Courier New"';
+            ctx.textAlign = 'left';
+
+            // Score
+            ctx.fillText(`SCORE: ${score.toString().padStart(6, '0')}`, 20, 30);
+
+            // High Score
+            ctx.textAlign = 'right';
+            ctx.fillText(`HIGH: ${highScore.toString().padStart(6, '0')}`, GAME_WIDTH - 20, 30);
+
+            // Stage
+            ctx.textAlign = 'left';
+            ctx.fillText(`STAGE: ${currentStage.toString().padStart(2, '0')}`, 20, 55);
+
+            // Lives
+            ctx.fillText('LIVES:', 20, 80);
+            for (let i = 0; i < lives; i++) {
+                drawLifeIcon(100 + i * 35, 70);
+            }
+
+            // 1UP indicator
+            ctx.textAlign = 'center';
+            if (frameCount % 60 < 30) {
+                ctx.fillText('1UP', GAME_WIDTH / 2, 30);
+            }
+        }
+
+        function drawLifeIcon(x, y) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.fillStyle = COLORS.player;
+            ctx.beginPath();
+            ctx.moveTo(0, -8);
+            ctx.lineTo(-4, 0);
+            ctx.lineTo(-3, 4);
+            ctx.lineTo(3, 4);
+            ctx.lineTo(4, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // ===== CAET QUESTION SYSTEM =====
+        let currentQuestions = [];
+        let currentQuestionIndex = 0;
+        let selectedAnswer = 0;
+        let questionTimer = 0;
+        let questionStartTime = 0;
+        let correctCount = 0;
+
+        function startQuestions() {
+            gameState = 'QUESTIONS';
+            currentQuestions = generateQuestions(5);
+            currentQuestionIndex = 0;
+            selectedAnswer = 0;
+            correctCount = 0;
+            questionStartTime = Date.now();
+            questionTimer = 20;
+        }
+
+        function generateQuestions(count) {
+            const categories = Object.keys(caetQuestions);
+            const questions = [];
+
+            for (let i = 0; i < count; i++) {
+                const category = categories[i % categories.length];
+                const categoryQuestions = caetQuestions[category];
+                const randomQ = categoryQuestions[Math.floor(Math.random() * categoryQuestions.length)];
+                questions.push({
+                    ...randomQ,
+                    category: category
+                });
+            }
+
+            return questions;
+        }
+
+        function updateQuestions() {
+            // Update timer
+            const elapsed = (Date.now() - questionStartTime) / 1000;
+            questionTimer = Math.max(0, 20 - Math.floor(elapsed));
+
+            if (questionTimer === 0) {
+                // Timeout - treat as wrong answer
+                handleAnswer(false);
+            }
+
+            // Handle input
+            if (keys['ArrowUp']) {
+                selectedAnswer = Math.max(0, selectedAnswer - 1);
+                keys['ArrowUp'] = false;
+            }
+            if (keys['ArrowDown']) {
+                selectedAnswer = Math.min(3, selectedAnswer + 1);
+                keys['ArrowDown'] = false;
+            }
+            if (keys[' '] || keys['Enter']) {
+                const currentQ = currentQuestions[currentQuestionIndex];
+                const isCorrect = selectedAnswer === currentQ.correct;
+                handleAnswer(isCorrect);
+                keys[' '] = false;
+                keys['Enter'] = false;
+            }
+        }
+
+        function handleAnswer(isCorrect) {
+            if (isCorrect) {
+                addScore(500);
+                correctCount++;
+                playSound('correct');
+                showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2, '+500', COLORS.scoreBonus);
+            } else {
+                score = Math.max(0, score - 200);
+                playSound('wrong');
+            }
+
+            currentQuestionIndex++;
+
+            if (currentQuestionIndex >= currentQuestions.length) {
+                // All questions answered
+                if (correctCount === currentQuestions.length) {
+                    // Perfect! Bonus
+                    addScore(2000);
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, 'PERFECT +2000', COLORS.perfect);
+                }
+
+                // Check for bonus stage
+                if (currentStage % 3 === 0) {
+                    startBonusStage();
+                } else {
+                    nextStage();
+                }
+            } else {
+                // Next question
+                selectedAnswer = 0;
+                questionStartTime = Date.now();
+                questionTimer = 20;
+            }
+        }
+
+        function drawQuestions() {
+            const currentQ = currentQuestions[currentQuestionIndex];
+
+            // Background overlay
+            ctx.fillStyle = 'rgba(10, 10, 46, 0.9)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            // Question box
+            const boxX = 100;
+            const boxY = 150;
+            const boxWidth = GAME_WIDTH - 200;
+            const boxHeight = 300;
+
+            ctx.strokeStyle = COLORS.hudText;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+            // Category and timer
+            ctx.fillStyle = COLORS.hudText;
+            ctx.font = 'bold 16px "Courier New"';
+            ctx.textAlign = 'left';
+            ctx.fillText(`[CATEGORY: ${formatCategory(currentQ.category)}]`, boxX + 20, boxY + 30);
+
+            ctx.textAlign = 'right';
+            ctx.fillStyle = questionTimer < 5 ? COLORS.warning : COLORS.hudText;
+            ctx.fillText(`TIME: ${questionTimer}s`, boxX + boxWidth - 20, boxY + 30);
+
+            // Question text
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 18px "Courier New"';
+            ctx.textAlign = 'left';
+            wrapText(ctx, currentQ.question, boxX + 20, boxY + 70, boxWidth - 40, 24);
+
+            // Answers
+            ctx.font = 'bold 16px "Courier New"';
+            const answerY = boxY + 140;
+            const letters = ['A', 'B', 'C', 'D'];
+
+            currentQ.answers.forEach((answer, index) => {
+                const y = answerY + index * 30;
+                const isSelected = index === selectedAnswer;
+
+                if (isSelected) {
+                    ctx.fillStyle = COLORS.scoreBonus;
+                    ctx.fillRect(boxX + 15, y - 18, boxWidth - 30, 25);
+                    ctx.fillStyle = '#000000';
+                } else {
+                    ctx.fillStyle = '#ffffff';
+                }
+
+                ctx.fillText(`[${letters[index]}] ${answer}`, boxX + 25, y);
+            });
+
+            // Bonus info
+            ctx.fillStyle = COLORS.scoreBonus;
+            ctx.font = 'bold 14px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.fillText('SCORE BONUS: +500 pts', GAME_WIDTH / 2, boxY + boxHeight - 20);
+
+            // Progress
+            ctx.fillText(`Question ${currentQuestionIndex + 1} / ${currentQuestions.length}`, GAME_WIDTH / 2, boxY - 20);
+        }
+
+        function formatCategory(category) {
+            return category.replace(/([A-Z])/g, ' $1').trim().toUpperCase();
+        }
+
+        function wrapText(context, text, x, y, maxWidth, lineHeight) {
+            const words = text.split(' ');
+            let line = '';
+            let lineY = y;
+
+            for (let n = 0; n < words.length; n++) {
+                const testLine = line + words[n] + ' ';
+                const metrics = context.measureText(testLine);
+                const testWidth = metrics.width;
+
+                if (testWidth > maxWidth && n > 0) {
+                    context.fillText(line, x, lineY);
+                    line = words[n] + ' ';
+                    lineY += lineHeight;
+                } else {
+                    line = testLine;
+                }
+            }
+            context.fillText(line, x, lineY);
+        }
+
+        // ===== BONUS STAGE =====
+        let bonusStageTimer = 0;
+        let bonusEnemiesDestroyed = 0;
+
+        function startBonusStage() {
+            gameState = 'BONUS';
+            bonusStageTimer = 40 * 60; // 40 seconds at 60 FPS
+            bonusEnemiesDestroyed = 0;
+
+            // Create enemies in special pattern
+            enemies = [];
+            for (let i = 0; i < 20; i++) {
+                const x = -100 + i * 50;
+                const y = 100 + Math.sin(i * 0.5) * 100;
+                const types = ['bee', 'butterfly', 'dragonfly'];
+                const type = types[i % types.length];
+                const enemy = new Enemy(type, x, y, i, 0);
+                enemy.state = 'BONUS';
+                enemy.bonusVx = 3;
+                enemies.push(enemy);
+            }
+
+            showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 3, '*** CHALLENGING STAGE ***', COLORS.perfect);
+        }
+
+        function updateBonusStage() {
+            bonusStageTimer--;
+
+            // Move enemies in pattern
+            enemies.forEach(enemy => {
+                enemy.x += enemy.bonusVx;
+                enemy.y += Math.sin(frameCount * 0.05) * 2;
+
+                if (enemy.x > GAME_WIDTH + 50) {
+                    enemy.x = -50;
+                }
+            });
+
+            if (bonusStageTimer <= 0 || enemies.filter(e => e.active).length === 0) {
+                // Bonus stage complete
+                if (enemies.filter(e => !e.active).length === 20) {
+                    addScore(10000);
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'PERFECT +10000', COLORS.perfect);
+                }
+                nextStage();
+            }
+        }
+
+        function drawBonusStage() {
+            // Timer
+            ctx.fillStyle = COLORS.scoreBonus;
+            ctx.font = 'bold 24px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.fillText(`TIME: ${Math.ceil(bonusStageTimer / 60)}`, GAME_WIDTH / 2, 50);
+        }
+
+        // ===== STAGE MANAGEMENT =====
+        function nextStage() {
+            currentStage++;
+            gameState = 'PLAYING';
+            createFormation(currentStage);
+            if (player) {
+                player.x = GAME_WIDTH / 2;
+                player.y = GAME_HEIGHT - 80;
+            } else {
+                player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
+            }
+            dualFighterActive = false;
+            capturedShip = null;
+
+            showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 3, `STAGE ${currentStage}`, COLORS.hudText);
+        }
+
+        function checkStageComplete() {
+            if (enemies.filter(e => e.active).length === 0 && gameState === 'PLAYING') {
+                showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'STAGE CLEAR', COLORS.scoreBonus);
+                setTimeout(() => {
+                    startQuestions();
+                }, 2000);
+                gameState = 'STAGE_CLEAR';
+            }
+        }
+
+        // ===== ATTRACT MODE =====
+        let attractTimer = 0;
+
+        function drawAttractMode() {
+            // Title
+            ctx.fillStyle = COLORS.hudText;
+            ctx.font = 'bold 48px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = COLORS.hudText;
+
+            const titleY = 150;
+            ctx.fillText('HANGAR', GAME_WIDTH / 2, titleY);
+            ctx.fillText('DEFENDER', GAME_WIDTH / 2, titleY + 60);
+            ctx.shadowBlur = 0;
+
+            // Subtitle
+            ctx.font = 'bold 16px "Courier New"';
+            ctx.fillStyle = COLORS.player;
+            ctx.fillText('Defend • Answer • Dominate', GAME_WIDTH / 2, titleY + 100);
+
+            // Start prompt (blinking)
+            if (frameCount % 60 < 30) {
+                ctx.font = 'bold 20px "Courier New"';
+                ctx.fillStyle = COLORS.scoreBonus;
+                ctx.fillText('>>> PRESS SPACE TO START <<<', GAME_WIDTH / 2, titleY + 150);
+            }
+
+            // High Score
+            ctx.font = 'bold 18px "Courier New"';
+            ctx.fillStyle = COLORS.hudText;
+            ctx.fillText('HIGH SCORES', GAME_WIDTH / 2, titleY + 220);
+
+            ctx.font = '16px "Courier New"';
+            ctx.fillText(`1st  ACE  ${highScore.toString().padStart(6, '0')}`, GAME_WIDTH / 2, titleY + 250);
+        }
+
+        // ===== GAME OVER =====
+        let gameOverTimer = 0;
+
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            ctx.fillStyle = COLORS.warning;
+            ctx.font = 'bold 60px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = COLORS.warning;
+            ctx.fillText('GAME OVER', GAME_WIDTH / 2, GAME_HEIGHT / 2);
+            ctx.shadowBlur = 0;
+
+            ctx.font = 'bold 20px "Courier New"';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(`FINAL SCORE: ${score}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 60);
+            ctx.fillText(`STAGES CLEARED: ${currentStage - 1}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 90);
+
+            if (gameOverTimer > 180) {
+                if (frameCount % 60 < 30) {
+                    ctx.fillStyle = COLORS.scoreBonus;
+                    ctx.fillText('PRESS SPACE TO CONTINUE', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 140);
+                }
+            }
+        }
+
+        // ===== PAUSE SYSTEM =====
+        function drawPause() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            ctx.fillStyle = COLORS.scoreBonus;
+            ctx.font = 'bold 48px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.fillText('PAUSED', GAME_WIDTH / 2, GAME_HEIGHT / 2);
+
+            ctx.font = '20px "Courier New"';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText('Press ESC or SPACE to resume', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 50);
+        }
+
+        // ===== INITIALIZE GAME =====
+        function initGame() {
+            // Create star field
+            for (let i = 0; i < 150; i++) {
+                stars.push(new Star());
+            }
+
+            // Initialize audio
+            initAudio();
+
+            // Load high score
+            loadHighScore();
+
+            // Set initial state
+            gameState = 'ATTRACT';
+
+            // Hide loading screen
+            setTimeout(() => {
+                loadingScreen.style.display = 'none';
+            }, 1000);
+        }
+
+        // ===== START NEW GAME =====
+        function startNewGame() {
+            currentStage = 1;
+            score = 0;
+            lives = 3;
+            extraLifeThreshold = 10000;
+            gameState = 'PLAYING';
+            dualFighterActive = false;
+            capturedShip = null;
+
+            player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
+            createFormation(currentStage);
+
+            bullets = [];
+            particles = [];
+        }
+
+        // ===== MAIN UPDATE LOOP =====
+        function update(deltaTime) {
+            frameCount++;
+
+            // Update stars
+            stars.forEach(star => star.update());
+
+            // Update particles
+            particles.forEach(particle => particle.update());
+            particles = particles.filter(p => p.active);
+
+            // Update floating texts
+            updateFloatingTexts();
+
+            // State-specific updates
+            switch(gameState) {
+                case 'ATTRACT':
+                    attractTimer++;
+                    if (keys[' ']) {
+                        startNewGame();
+                        keys[' '] = false;
+                    }
+                    break;
+
+                case 'PLAYING':
+                    if (player) {
+                        player.update(deltaTime);
+                    }
+
+                    bullets.forEach(bullet => bullet.update());
+                    bullets = bullets.filter(b => b.active);
+
+                    const formationOffset = Math.sin(frameCount * 0.01) * 30;
+                    enemies.forEach(enemy => enemy.update(formationOffset));
+
+                    updateDiveAttacks();
+                    checkCollisions();
+                    checkStageComplete();
+                    break;
+
+                case 'STAGE_CLEAR':
+                    // Wait for transition
+                    break;
+
+                case 'QUESTIONS':
+                    updateQuestions();
+                    break;
+
+                case 'BONUS':
+                    if (player) {
+                        player.update(deltaTime);
+                    }
+                    bullets.forEach(bullet => bullet.update());
+                    bullets = bullets.filter(b => b.active);
+                    enemies.forEach(enemy => enemy.update(0));
+                    checkCollisions();
+                    updateBonusStage();
+                    break;
+
+                case 'PAUSED':
+                    if (keys['Escape'] || keys[' ']) {
+                        gameState = 'PLAYING';
+                        keys['Escape'] = false;
+                        keys[' '] = false;
+                    }
+                    break;
+
+                case 'GAME_OVER':
+                    gameOverTimer++;
+                    if (gameOverTimer > 180 && keys[' ']) {
+                        gameState = 'ATTRACT';
+                        gameOverTimer = 0;
+                        keys[' '] = false;
+                    }
+                    break;
+            }
+
+            // Pause check
+            if (gameState === 'PLAYING' && keys['Escape']) {
+                gameState = 'PAUSED';
+                keys['Escape'] = false;
+            }
+        }
+
+        // ===== MAIN DRAW LOOP =====
+        function draw() {
+            // Clear canvas
+            ctx.fillStyle = COLORS.background;
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+            // Draw stars
+            stars.forEach(star => star.draw());
+
+            // State-specific rendering
+            switch(gameState) {
+                case 'ATTRACT':
+                    drawAttractMode();
+                    break;
+
+                case 'PLAYING':
+                case 'STAGE_CLEAR':
+                case 'BONUS':
+                    // Draw enemies
+                    enemies.forEach(enemy => {
+                        if (enemy.active) enemy.draw();
+                    });
+
+                    // Draw bullets
+                    bullets.forEach(bullet => bullet.draw());
+
+                    // Draw player
+                    if (player) {
+                        player.draw();
+                        if (dualFighterActive) {
+                            ctx.save();
+                            ctx.translate(-30, 0);
+                            player.draw();
+                            ctx.translate(60, 0);
+                            player.draw();
+                            ctx.restore();
+                        }
+                    }
+
+                    // Draw particles
+                    particles.forEach(particle => particle.draw());
+
+                    // Draw HUD
+                    drawHUD();
+
+                    // Draw floating texts
+                    drawFloatingTexts();
+
+                    if (gameState === 'BONUS') {
+                        drawBonusStage();
+                    }
+                    break;
+
+                case 'QUESTIONS':
+                    drawQuestions();
+                    break;
+
+                case 'PAUSED':
+                    // Draw game state first
+                    enemies.forEach(enemy => {
+                        if (enemy.active) enemy.draw();
+                    });
+                    bullets.forEach(bullet => bullet.draw());
+                    if (player) player.draw();
+                    drawHUD();
+
+                    // Then draw pause overlay
+                    drawPause();
+                    break;
+
+                case 'GAME_OVER':
+                    drawGameOver();
+                    break;
+            }
+        }
+
+        // ===== GAME LOOP =====
+        function gameLoop(timestamp) {
+            const deltaTime = timestamp - lastFrameTime;
+
+            if (deltaTime >= FRAME_TIME) {
+                update(deltaTime);
+                draw();
+                lastFrameTime = timestamp;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ===== INPUT HANDLING =====
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+
+            // Prevent default for game keys
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' ', 'Enter', 'Escape'].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // ===== START GAME =====
+        window.addEventListener('load', () => {
+            initGame();
+            requestAnimationFrame(gameLoop);
+        });
+
+    </script>
+</body>
+</html>

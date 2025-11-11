@@ -27,7 +27,7 @@
 
         #gameContainer {
             position: relative;
-            width: 800px;
+            width: 450px;
             height: 600px;
             background: #0a0a2e;
             border: 4px solid #00ff41;
@@ -111,7 +111,7 @@
 </head>
 <body>
     <div id="gameContainer">
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <canvas id="gameCanvas" width="450" height="600"></canvas>
         <div id="loadingScreen">
             <div class="glow">HANGAR DEFENDER</div>
             <div style="margin-top: 20px; font-size: 16px;">INITIALIZING SYSTEMS...</div>
@@ -131,7 +131,7 @@
         const loadingScreen = document.getElementById('loadingScreen');
 
         // ===== GAME CONSTANTS =====
-        const GAME_WIDTH = 800;
+        const GAME_WIDTH = 450;
         const GAME_HEIGHT = 600;
         const FPS = 60;
         const FRAME_TIME = 1000 / FPS;
@@ -312,7 +312,7 @@
         // ===== ENEMY CLASS =====
         class Enemy {
             constructor(type, formationX, formationY, gridX, gridY) {
-                this.type = type; // 'boss', 'butterfly', 'dragonfly', 'bee'
+                this.type = type; // 'boss', 'butterfly', 'dragonfly', 'bee', 'capture'
                 this.formationX = formationX;
                 this.formationY = formationY;
                 this.gridX = gridX;
@@ -321,14 +321,17 @@
                 this.y = -50; // Start above screen
                 this.vx = 0;
                 this.vy = 0;
-                this.state = 'ENTERING'; // ENTERING, FORMATION, DIVING, RETURNING
+                this.state = 'ENTERING'; // ENTERING, FORMATION, DIVING, RETURNING, LOOPING
                 this.active = true;
                 this.diving = false;
                 this.diveProgress = 0;
                 this.divePattern = null;
+                this.diveBombCount = 0; // How many times to dive before returning
+                this.currentDive = 0; // Current dive number
                 this.capturedShip = null;
                 this.tractorBeamActive = false;
                 this.tractorBeamProgress = 0;
+                this.tractorBeamTimer = 0;
                 this.animFrame = 0;
                 this.animSpeed = 0.1;
 
@@ -339,11 +342,21 @@
             setupType() {
                 switch(this.type) {
                     case 'boss':
-                        this.width = 40;
-                        this.height = 40;
+                        this.width = 28;
+                        this.height = 28;
                         this.color = COLORS.boss;
                         this.pointsFormation = 150;
                         this.pointsDiving = 400;
+                        this.speed = 1.3; // More agile
+                        break;
+                    case 'capture':
+                        this.width = 32;
+                        this.height = 32;
+                        this.color = '#ff00ff'; // Purple/magenta for capture aliens
+                        this.pointsFormation = 200;
+                        this.pointsDiving = 800;
+                        this.speed = 1.0;
+                        this.canCapture = true;
                         break;
                     case 'butterfly':
                         this.width = 32;
@@ -351,6 +364,7 @@
                         this.color = COLORS.butterfly;
                         this.pointsFormation = 80;
                         this.pointsDiving = 160;
+                        this.speed = 1.0;
                         break;
                     case 'dragonfly':
                         this.width = 30;
@@ -358,6 +372,7 @@
                         this.color = COLORS.dragonfly;
                         this.pointsFormation = 100;
                         this.pointsDiving = 160;
+                        this.speed = 1.0;
                         break;
                     case 'bee':
                         this.width = 24;
@@ -365,6 +380,7 @@
                         this.color = COLORS.bee;
                         this.pointsFormation = 50;
                         this.pointsDiving = 100;
+                        this.speed = 1.0;
                         break;
                 }
             }
@@ -398,8 +414,29 @@
                         this.executeDive();
                         break;
 
+                    case 'LOOPING':
+                        // Loop back up outside play area
+                        this.y -= 8; // Move up quickly outside screen
+
+                        // When above screen, check if should dive again or return
+                        if (this.y < -50) {
+                            this.currentDive++;
+                            if (this.currentDive < this.diveBombCount) {
+                                // Dive again! Reset position to side
+                                this.x = this.x < GAME_WIDTH / 2 ? -50 : GAME_WIDTH + 50;
+                                this.y = GAME_HEIGHT / 2;
+                                this.state = 'DIVING';
+                                this.diveProgress = 0;
+                            } else {
+                                // Done diving, return to formation
+                                this.state = 'RETURNING';
+                                this.currentDive = 0;
+                            }
+                        }
+                        break;
+
                     case 'RETURNING':
-                        // Return to formation
+                        // Return to formation (outside visible area)
                         const rdx = this.formationX + formationOffsetX - this.x;
                         const rdy = this.formationY - this.y;
                         const rdist = Math.sqrt(rdx * rdx + rdy * rdy);
@@ -408,18 +445,26 @@
                             this.state = 'FORMATION';
                             this.diving = false;
                         } else {
-                            this.x += rdx * 0.03;
-                            this.y += rdy * 0.03;
+                            this.x += rdx * 0.05;
+                            this.y += rdy * 0.05;
                         }
                         break;
                 }
 
                 // Update tractor beam
                 if (this.tractorBeamActive) {
+                    this.tractorBeamTimer++;
                     this.tractorBeamProgress += 0.1;
-                    if (this.tractorBeamProgress > 1.5) {
+
+                    // Turn off after 1 second (60 frames)
+                    if (this.tractorBeamTimer > 60) {
                         this.tractorBeamActive = false;
                         this.tractorBeamProgress = 0;
+                        this.tractorBeamTimer = 0;
+                        // Return to formation after tractor beam
+                        if (this.state === 'DIVING') {
+                            this.state = 'RETURNING';
+                        }
                     }
                 }
             }
@@ -429,54 +474,95 @@
                     this.state = 'DIVING';
                     this.diving = true;
                     this.diveProgress = 0;
+                    this.currentDive = 0;
 
-                    // Boss has chance to activate tractor beam
-                    if (this.type === 'boss' && Math.random() < 0.25) {
-                        this.tractorBeamActive = true;
-                        playSound('tractorBeam');
+                    // Some enemies do divebomb patterns (dive multiple times)
+                    if (Math.random() < 0.3) { // 30% chance
+                        this.diveBombCount = Math.floor(Math.random() * 2) + 2; // 2-3 dives
+                    } else {
+                        this.diveBombCount = 1; // Single dive
+                    }
+
+                    // Capture enemies have chance to activate tractor beam
+                    if (this.type === 'capture' && Math.random() < 0.25) {
+                        this.shouldUseTractorBeam = true;
+                    } else {
+                        this.shouldUseTractorBeam = false;
                     }
                 }
             }
 
             executeDive() {
-                this.diveProgress += 0.02;
+                // Special handling for capture enemies with tractor beam
+                if (this.type === 'capture' && this.shouldUseTractorBeam && !this.tractorBeamActive) {
+                    // Dive down toward player area
+                    const targetY = GAME_HEIGHT - 200; // Stop above player
+                    const targetX = player ? player.x : GAME_WIDTH / 2;
+
+                    // Move toward target position
+                    const dx = targetX - this.x;
+                    const dy = targetY - this.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < 20) {
+                        // Reached position, activate tractor beam
+                        this.tractorBeamActive = true;
+                        this.tractorBeamTimer = 0;
+                        playSound('tractorBeam');
+                    } else {
+                        // Move toward target
+                        this.x += dx * 0.05;
+                        this.y += dy * 0.05;
+                    }
+                    return; // Don't use normal dive pattern
+                }
+
+                this.diveProgress += 0.02 * (this.speed || 1.0);
 
                 const centerX = GAME_WIDTH / 2;
                 const centerY = GAME_HEIGHT / 2;
 
                 switch(this.type) {
                     case 'boss':
-                        // Gentle arc toward player
+                        // Faster, more aggressive arc
                         const t = this.diveProgress;
-                        this.x = this.formationX + Math.sin(t * Math.PI) * 150;
-                        this.y = this.formationY + t * 400;
+                        this.x = this.formationX + Math.sin(t * Math.PI) * 100;
+                        this.y = this.formationY + t * 500;
+                        break;
+
+                    case 'capture':
+                        // Gentle arc toward center
+                        const ct = this.diveProgress;
+                        this.x = this.formationX + Math.sin(ct * Math.PI) * 120;
+                        this.y = this.formationY + ct * 420;
                         break;
 
                     case 'butterfly':
                         // Figure-8 swoop
                         const bt = this.diveProgress * Math.PI * 2;
-                        this.x = this.formationX + Math.sin(bt) * 100;
-                        this.y = this.formationY + this.diveProgress * 350 + Math.sin(bt * 2) * 50;
+                        this.x = this.formationX + Math.sin(bt) * 80;
+                        this.y = this.formationY + this.diveProgress * 380 + Math.sin(bt * 2) * 40;
                         break;
 
                     case 'bee':
                         // Fast straight dive
-                        this.y = this.formationY + this.diveProgress * 500;
-                        this.x += (player.x - this.x) * 0.01;
+                        this.y = this.formationY + this.diveProgress * 520;
+                        this.x += (player && player.x ? (player.x - this.x) * 0.015 : 0);
                         break;
 
                     case 'dragonfly':
                         // Wide looping pattern
                         const dt = this.diveProgress * Math.PI;
-                        this.x = this.formationX + Math.cos(dt) * 120;
-                        this.y = this.formationY + this.diveProgress * 380;
+                        this.x = this.formationX + Math.cos(dt) * 90;
+                        this.y = this.formationY + this.diveProgress * 400;
                         break;
                 }
 
-                // Check if dive complete
+                // Check if dive complete - transition to LOOPING to go back up
                 if (this.diveProgress >= 1 || this.y > GAME_HEIGHT + 50) {
-                    this.state = 'RETURNING';
+                    this.state = 'LOOPING';
                     this.tractorBeamActive = false;
+                    this.shouldUseTractorBeam = false;
                 }
             }
 
@@ -488,6 +574,9 @@
                 switch(this.type) {
                     case 'boss':
                         this.drawBoss();
+                        break;
+                    case 'capture':
+                        this.drawCapture();
                         break;
                     case 'butterfly':
                         this.drawButterfly();
@@ -518,36 +607,90 @@
             }
 
             drawBoss() {
-                // Large bug with circuit board pattern
-                const wingSpan = Math.sin(this.animFrame) * 3;
+                // Smaller, more agile bug
+                const wingSpan = Math.sin(this.animFrame) * 2;
 
                 ctx.fillStyle = this.color;
-                // Body
+                // Body (smaller)
                 ctx.beginPath();
-                ctx.ellipse(0, 0, 15, 20, 0, 0, Math.PI * 2);
+                ctx.ellipse(0, 0, 10, 14, 0, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Wings
+                // Wings (smaller)
                 ctx.beginPath();
-                ctx.ellipse(-12 - wingSpan, -5, 8, 15, -0.3, 0, Math.PI * 2);
-                ctx.ellipse(12 + wingSpan, -5, 8, 15, 0.3, 0, Math.PI * 2);
+                ctx.ellipse(-8 - wingSpan, -3, 6, 10, -0.3, 0, Math.PI * 2);
+                ctx.ellipse(8 + wingSpan, -3, 6, 10, 0.3, 0, Math.PI * 2);
                 ctx.fill();
 
                 // Circuit pattern
                 ctx.strokeStyle = '#66ccff';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.moveTo(-8, -10);
-                ctx.lineTo(8, -10);
-                ctx.moveTo(0, -10);
-                ctx.lineTo(0, 10);
+                ctx.moveTo(-6, -7);
+                ctx.lineTo(6, -7);
+                ctx.moveTo(0, -7);
+                ctx.lineTo(0, 7);
                 ctx.stroke();
 
                 // Eyes
                 ctx.fillStyle = '#ff0000';
                 ctx.beginPath();
-                ctx.arc(-5, -5, 3, 0, Math.PI * 2);
-                ctx.arc(5, -5, 3, 0, Math.PI * 2);
+                ctx.arc(-3, -3, 2, 0, Math.PI * 2);
+                ctx.arc(3, -3, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            drawCapture() {
+                // Special capture enemy - larger with pulsing effect
+                const pulse = Math.sin(this.animFrame) * 2;
+                const wingSpan = Math.sin(this.animFrame * 1.5) * 4;
+
+                ctx.fillStyle = this.color;
+
+                // Main body - larger and more imposing
+                ctx.beginPath();
+                ctx.ellipse(0, 0, 14 + pulse, 16 + pulse, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Large wings
+                ctx.globalAlpha = 0.8;
+                ctx.beginPath();
+                ctx.ellipse(-14 - wingSpan, -4, 10, 14, -0.4, 0, Math.PI * 2);
+                ctx.ellipse(14 + wingSpan, -4, 10, 14, 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+
+                // Glowing "antenna" for tractor beam
+                ctx.strokeStyle = '#66ccff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-4, -10);
+                ctx.lineTo(-6, -16);
+                ctx.moveTo(4, -10);
+                ctx.lineTo(6, -16);
+                ctx.stroke();
+
+                // Glowing tips
+                ctx.fillStyle = '#66ccff';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#66ccff';
+                ctx.beginPath();
+                ctx.arc(-6, -16, 3, 0, Math.PI * 2);
+                ctx.arc(6, -16, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // Eyes - more menacing
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(-5, -3, 3, 0, Math.PI * 2);
+                ctx.arc(5, -3, 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(-5, -3, 1.5, 0, Math.PI * 2);
+                ctx.arc(5, -3, 1.5, 0, Math.PI * 2);
                 ctx.fill();
             }
 
@@ -1359,39 +1502,47 @@
         // ===== FORMATION SYSTEM =====
         function createFormation(stage) {
             enemies = [];
-            const formationStartY = 100;
-            const spacingX = 60;
-            const spacingY = 50;
-            const formationStartX = GAME_WIDTH / 2 - (4 * spacingX) / 2;
+            const formationStartY = 80;
+            const spacingX = 45;
+            const spacingY = 45;
+            const formationStartX = GAME_WIDTH / 2 - (4.5 * spacingX) / 2;
 
-            // Row 1: Bosses
-            const bossCount = stage >= 10 ? 6 : 4;
+            // Row 1: Capture aliens (the ones with tractor beam)
+            const captureCount = Math.floor((stage >= 10 ? 3 : 2) * 1.5);
+            for (let i = 0; i < captureCount; i++) {
+                const x = formationStartX + (i + 1.5) * spacingX;
+                const y = formationStartY;
+                enemies.push(new Enemy('capture', x, y, i, 0));
+            }
+
+            // Row 2: Bosses (smaller and more agile now)
+            const bossCount = Math.floor((stage >= 10 ? 6 : 4) * 1.5);
             for (let i = 0; i < bossCount; i++) {
                 const x = formationStartX + i * spacingX;
-                const y = formationStartY;
-                enemies.push(new Enemy('boss', x, y, i, 0));
-            }
-
-            // Row 2: Butterflies
-            for (let i = 0; i < 6; i++) {
-                const x = formationStartX + i * spacingX;
                 const y = formationStartY + spacingY;
-                enemies.push(new Enemy('butterfly', x, y, i, 1));
+                enemies.push(new Enemy('boss', x, y, i, 1));
             }
 
-            // Row 3: Dragonflies
-            for (let i = 0; i < 6; i++) {
-                const x = formationStartX + i * spacingX;
+            // Row 3: Butterflies
+            for (let i = 0; i < Math.floor(6 * 1.5); i++) {
+                const x = formationStartX + (i - 1) * spacingX;
                 const y = formationStartY + spacingY * 2;
-                enemies.push(new Enemy('dragonfly', x, y, i, 2));
+                enemies.push(new Enemy('butterfly', x, y, i, 2));
             }
 
-            // Rows 4-5: Bees
-            for (let row = 0; row < 2; row++) {
-                for (let i = 0; i < 8; i++) {
-                    const x = formationStartX - spacingX + i * spacingX;
-                    const y = formationStartY + spacingY * (3 + row);
-                    enemies.push(new Enemy('bee', x, y, i, 3 + row));
+            // Row 4: Dragonflies
+            for (let i = 0; i < Math.floor(6 * 1.5); i++) {
+                const x = formationStartX + (i - 1) * spacingX;
+                const y = formationStartY + spacingY * 3;
+                enemies.push(new Enemy('dragonfly', x, y, i, 3));
+            }
+
+            // Rows 5-6: Bees
+            for (let row = 0; row < 3; row++) {
+                for (let i = 0; i < Math.floor(8 * 1.5); i++) {
+                    const x = formationStartX - spacingX * 1.5 + i * spacingX;
+                    const y = formationStartY + spacingY * (4 + row);
+                    enemies.push(new Enemy('bee', x, y, i, 4 + row));
                 }
             }
         }
@@ -1448,11 +1599,15 @@
                     if (!enemy.active) return;
 
                     if (enemy.collidesWith(player)) {
+                        // Destroy the enemy too
+                        enemy.active = false;
+                        createExplosion(enemy.x, enemy.y, 20);
+                        // Player loses life
                         playerHit();
                     }
 
                     // Check tractor beam collision
-                    if (enemy.tractorBeamActive && !capturedShip) {
+                    if (enemy.tractorBeamActive && !capturedShip && player) {
                         const beamLeft = enemy.x - 25;
                         const beamRight = enemy.x + 25;
                         const beamTop = enemy.y + 20;
@@ -1469,8 +1624,11 @@
 
         // ===== PLAYER HIT =====
         function playerHit() {
+            if (!player) return; // Safety check
+
             lives--;
             createExplosion(player.x, player.y, 30);
+            playSound('explosion'); // Play explosion sound
 
             if (dualFighterActive) {
                 dualFighterActive = false;
@@ -1480,13 +1638,13 @@
                 gameState = 'GAME_OVER';
                 player = null;
             } else {
-                // Respawn player
+                // Respawn player after delay
+                player = null; // Remove player immediately
                 setTimeout(() => {
-                    if (gameState === 'PLAYING') {
+                    if (gameState === 'PLAYING' || gameState === 'BONUS') {
                         player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
                     }
                 }, 2000);
-                player = null;
             }
         }
 

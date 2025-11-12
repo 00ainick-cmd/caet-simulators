@@ -1,0 +1,13 @@
+{
+  "name": "neets-textbook-generator",
+  "description": "Create NEETS-style technical textbooks with integrated interactive simulations",
+  "version": "1.0.0",
+  "tags": ["education", "textbook", "neets", "simulation", "interactive", "technical-writing"],
+  "author": "CAET Simulators Project",
+  "capabilities": [
+    "Generate comprehensive textbook modules",
+    "Create embedded interactive simulations",
+    "Design hands-on learning experiences",
+    "Produce publication-ready HTML content"
+  ]
+}

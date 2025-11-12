@@ -176,6 +176,12 @@
         let stageIntroTimer = 0;
         let readyTimer = 0;
         let perfectClearActive = false;
+        let slowMotion = { active: false, duration: 0, factor: 0.3 };
+        let challengeText = { active: false, text: '', color: '#fff', duration: 0, scale: 1 };
+        let stageTransition = { active: false, type: 'fade', progress: 0, direction: 'in' };
+        let bossWarning = { active: false, duration: 0 };
+        let hitsTaken = 0;
+        let bulletTrails = [];
 
         // ===== ENTITY ARRAYS =====
         let player = null;
@@ -243,18 +249,23 @@
                 killStreak++;
                 comboTimer = 120; // 2 seconds at 60fps
 
-                // Combo announcements
+                // Combo announcements with EPIC effects
                 if (comboCount === 5) {
                     showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50, '5 COMBO!', COLORS.scoreBonus, 2);
                     addScreenFlash(COLORS.scoreBonus, 0.3, 10);
+                    showChallengeText('NICE!', COLORS.scoreBonus, 40);
                 } else if (comboCount === 10) {
                     showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50, '10 COMBO!!', COLORS.perfect, 2.5);
                     addScreenShake(8, 15);
                     addScreenFlash(COLORS.perfect, 0.4, 15);
+                    showChallengeText('EXCELLENT!!', COLORS.perfect, 50);
                 } else if (comboCount === 20) {
                     showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50, '20 COMBO!!!', COLORS.warning, 3);
                     addScreenShake(12, 20);
                     addScreenFlash(COLORS.warning, 0.5, 20);
+                    showChallengeText('UNSTOPPABLE!!!', COLORS.warning, 60);
+                    // ACTIVATE SLOW MOTION FOR EPIC MOMENT
+                    activateSlowMotion(90); // 1.5 seconds
                 }
             } else {
                 comboCount = 1;
@@ -262,6 +273,153 @@
                 comboTimer = 120;
             }
             lastKillTime = now;
+        }
+
+        // ===== SLOW MOTION SYSTEM =====
+        function activateSlowMotion(duration) {
+            slowMotion.active = true;
+            slowMotion.duration = duration;
+        }
+
+        function updateSlowMotion() {
+            if (slowMotion.duration > 0) {
+                slowMotion.duration--;
+            } else {
+                slowMotion.active = false;
+            }
+        }
+
+        function getTimeFactor() {
+            return slowMotion.active ? slowMotion.factor : 1.0;
+        }
+
+        // ===== CHALLENGE TEXT SYSTEM =====
+        function showChallengeText(text, color, duration) {
+            challengeText.active = true;
+            challengeText.text = text;
+            challengeText.color = color;
+            challengeText.duration = duration;
+            challengeText.scale = 0.1; // Start small
+        }
+
+        function updateChallengeText() {
+            if (challengeText.duration > 0) {
+                challengeText.duration--;
+                // Scale up quickly then fade
+                if (challengeText.scale < 1.5) {
+                    challengeText.scale += 0.1;
+                }
+            } else {
+                challengeText.active = false;
+            }
+        }
+
+        function drawChallengeText() {
+            if (!challengeText.active) return;
+
+            const alpha = Math.min(challengeText.duration / 20, 1);
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = challengeText.color;
+            ctx.font = `bold ${Math.floor(48 * challengeText.scale)}px "Courier New"`;
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = challengeText.color;
+            ctx.fillText(challengeText.text, GAME_WIDTH / 2, GAME_HEIGHT / 3);
+            ctx.shadowBlur = 0;
+            ctx.globalAlpha = 1;
+        }
+
+        // ===== BOSS WARNING SYSTEM =====
+        function activateBossWarning() {
+            bossWarning.active = true;
+            bossWarning.duration = 120; // 2 seconds
+            addScreenShake(6, 20);
+            addScreenFlash('#ff0000', 0.3, 15);
+            showChallengeText('WARNING!', COLORS.warning, 80);
+            playSound('warning');
+        }
+
+        function updateBossWarning() {
+            if (bossWarning.duration > 0) {
+                bossWarning.duration--;
+            } else {
+                bossWarning.active = false;
+            }
+        }
+
+        function drawBossWarning() {
+            if (!bossWarning.active) return;
+
+            const flash = Math.floor(bossWarning.duration / 10) % 2;
+            if (flash === 0) return;
+
+            ctx.fillStyle = COLORS.warning;
+            ctx.font = 'bold 32px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = COLORS.warning;
+            ctx.fillText('! MULTIPLE HOSTILES DETECTED !', GAME_WIDTH / 2, 120);
+            ctx.shadowBlur = 0;
+        }
+
+        // ===== STAGE TRANSITION SYSTEM =====
+        function startStageTransition(direction = 'in') {
+            stageTransition.active = true;
+            stageTransition.direction = direction;
+            stageTransition.progress = 0;
+        }
+
+        function updateStageTransition() {
+            if (stageTransition.active) {
+                stageTransition.progress += 0.02;
+                if (stageTransition.progress >= 1) {
+                    stageTransition.active = false;
+                }
+            }
+        }
+
+        function drawStageTransition() {
+            if (!stageTransition.active) return;
+
+            const alpha = stageTransition.direction === 'in'
+                ? 1 - stageTransition.progress
+                : stageTransition.progress;
+
+            ctx.fillStyle = '#000000';
+            ctx.globalAlpha = alpha;
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            ctx.globalAlpha = 1;
+        }
+
+        // ===== BULLET TRAIL SYSTEM =====
+        class BulletTrail {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.life = 10;
+                this.maxLife = 10;
+            }
+
+            update() {
+                this.life--;
+            }
+
+            draw() {
+                const alpha = this.life / this.maxLife;
+                ctx.globalAlpha = alpha * 0.5;
+                ctx.fillStyle = this.color;
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = this.color;
+                ctx.fillRect(this.x - 2, this.y - 6, 4, 12);
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function updateBulletTrails() {
+            bulletTrails.forEach(trail => trail.update());
+            bulletTrails = bulletTrails.filter(t => t.life > 0);
         }
 
         // ===== PLAYER CLASS =====
@@ -403,10 +561,18 @@
             }
 
             update() {
+                // Create bullet trail
+                if (!this.isEnemy && frameCount % 2 === 0) {
+                    bulletTrails.push(new BulletTrail(this.x, this.y, this.color));
+                }
+
+                const timeFactor = getTimeFactor();
+                const adjustedSpeed = this.speed * timeFactor;
+
                 if (this.isEnemy) {
-                    this.y += this.speed;
+                    this.y += adjustedSpeed;
                 } else {
-                    this.y -= this.speed;
+                    this.y -= adjustedSpeed;
                 }
 
                 // Remove if off screen
@@ -1482,6 +1648,18 @@
                     oscillator.start();
                     oscillator.stop(audioContext.currentTime + 0.4);
                     break;
+
+                case 'warning':
+                    // GPWS-style warning - alternating high/low tones
+                    oscillator.frequency.value = 800;
+                    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                    oscillator.frequency.setValueAtTime(400, audioContext.currentTime + 0.2);
+                    oscillator.frequency.setValueAtTime(800, audioContext.currentTime + 0.4);
+                    oscillator.type = 'square';
+                    gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.6);
+                    break;
             }
         }
 
@@ -1662,7 +1840,9 @@
         // ===== PLAYER HIT =====
         function playerHit() {
             lives--;
+            hitsTaken++; // Track for perfect clear
             createExplosion(player.x, player.y, 30);
+            addScreenShake(15, 25); // BIG shake on death
 
             if (dualFighterActive) {
                 dualFighterActive = false;
@@ -1685,6 +1865,7 @@
         // ===== CAPTURE MECHANICS =====
         function capturePlayer(capturingBoss) {
             playSound('tractorBeam');
+            hitsTaken++; // Count capture as a hit
             capturedShip = {
                 boss: capturingBoss,
                 x: player.x,
@@ -1693,6 +1874,8 @@
             capturingBoss.capturedShip = capturedShip;
 
             lives--;
+            addScreenShake(10, 20);
+
             if (lives <= 0) {
                 gameState = 'GAME_OVER';
             }
@@ -2176,10 +2359,100 @@
             ctx.fillText(`TIME: ${Math.ceil(bonusStageTimer / 60)}`, GAME_WIDTH / 2, 50);
         }
 
+        // ===== STAGE INTRO/READY SYSTEM =====
+        function startStageIntro() {
+            gameState = 'STAGE_INTRO';
+            stageIntroTimer = 120; // 2 seconds
+            hitsTaken = 0; // Reset for perfect clear tracking
+            startStageTransition('in');
+        }
+
+        function updateStageIntro() {
+            if (stageIntroTimer > 0) {
+                stageIntroTimer--;
+                if (stageIntroTimer === 0) {
+                    startReadyScreen();
+                }
+            }
+        }
+
+        function drawStageIntro() {
+            ctx.fillStyle = COLORS.hudText;
+            ctx.textAlign = 'center';
+
+            // "STAGE X" with dramatic scaling
+            const scale = Math.min(stageIntroTimer / 30, 1);
+            const fontSize = 64 * (1 + (1 - scale) * 0.5);
+            ctx.font = `bold ${fontSize}px "Courier New"`;
+            ctx.shadowBlur = 40;
+            ctx.shadowColor = COLORS.hudText;
+
+            const alpha = Math.min(stageIntroTimer / 20, 1);
+            ctx.globalAlpha = alpha;
+
+            ctx.fillText(`STAGE ${currentStage}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+
+            // Stage difficulty indicator
+            let difficulty = 'STANDARD';
+            if (currentStage >= 10) difficulty = 'EXTREME';
+            else if (currentStage >= 7) difficulty = 'HARD';
+            else if (currentStage >= 4) difficulty = 'MODERATE';
+
+            ctx.font = 'bold 24px "Courier New"';
+            ctx.fillText(difficulty, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40);
+
+            ctx.shadowBlur = 0;
+            ctx.globalAlpha = 1;
+        }
+
+        function startReadyScreen() {
+            gameState = 'READY';
+            readyTimer = 60; // 1 second
+        }
+
+        function updateReadyScreen() {
+            if (readyTimer > 0) {
+                readyTimer--;
+                if (readyTimer === 0) {
+                    gameState = 'PLAYING';
+                    // Check for boss warning
+                    const bossCount = enemies.filter(e => e.type === 'boss').length;
+                    if (bossCount >= 4) {
+                        activateBossWarning();
+                    }
+                }
+            }
+        }
+
+        function drawReadyScreen() {
+            // Draw enemies in background faded
+            ctx.globalAlpha = 0.3;
+            enemies.forEach(enemy => {
+                if (enemy.active) enemy.draw();
+            });
+            ctx.globalAlpha = 1;
+
+            // Draw player faded
+            if (player) {
+                ctx.globalAlpha = 0.5;
+                player.draw();
+                ctx.globalAlpha = 1;
+            }
+
+            // "READY!" text with pulse
+            const pulse = Math.sin(readyTimer * 0.2) * 0.3 + 1;
+            ctx.fillStyle = COLORS.scoreBonus;
+            ctx.font = `bold ${72 * pulse}px "Courier New"`;
+            ctx.textAlign = 'center';
+            ctx.shadowBlur = 50;
+            ctx.shadowColor = COLORS.scoreBonus;
+            ctx.fillText('READY!', GAME_WIDTH / 2, GAME_HEIGHT / 2);
+            ctx.shadowBlur = 0;
+        }
+
         // ===== STAGE MANAGEMENT =====
         function nextStage() {
             currentStage++;
-            gameState = 'PLAYING';
             createFormation(currentStage);
             if (player) {
                 player.x = GAME_WIDTH / 2;
@@ -2190,12 +2463,22 @@
             dualFighterActive = false;
             capturedShip = null;
 
-            showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 3, `STAGE ${currentStage}`, COLORS.hudText);
+            startStageIntro(); // New dramatic intro
         }
 
         function checkStageComplete() {
             if (enemies.filter(e => e.active).length === 0 && gameState === 'PLAYING') {
-                showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'STAGE CLEAR', COLORS.scoreBonus);
+                // Check for PERFECT CLEAR!
+                if (hitsTaken === 0) {
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'PERFECT CLEAR!', COLORS.perfect, 3);
+                    showChallengeText('FLAWLESS VICTORY!', COLORS.perfect, 80);
+                    addScore(5000);
+                    addScreenShake(10, 30);
+                    addScreenFlash(COLORS.perfect, 0.5, 30);
+                } else {
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'STAGE CLEAR', COLORS.scoreBonus, 2);
+                }
+
                 setTimeout(() => {
                     startQuestions();
                 }, 2000);
@@ -2452,10 +2735,15 @@
         function update(deltaTime) {
             frameCount++;
 
-            // Update arcade effects
+            // Update ALL arcade effects
             updateScreenShake();
             updateScreenFlash();
             updateComboSystem();
+            updateSlowMotion();
+            updateChallengeText();
+            updateBossWarning();
+            updateStageTransition();
+            updateBulletTrails();
 
             // Update stars
             stars.forEach(star => star.update());
@@ -2495,6 +2783,17 @@
 
                 case 'STAGE_CLEAR':
                     // Wait for transition
+                    break;
+
+                case 'STAGE_INTRO':
+                    updateStageIntro();
+                    break;
+
+                case 'READY':
+                    updateReadyScreen();
+                    // Still update enemies for visual effect
+                    const formationOffset = Math.sin(frameCount * 0.01) * 30;
+                    enemies.forEach(enemy => enemy.update(formationOffset));
                     break;
 
                 case 'QUESTIONS':
@@ -2566,6 +2865,14 @@
                     drawAttractMode();
                     break;
 
+                case 'STAGE_INTRO':
+                    drawStageIntro();
+                    break;
+
+                case 'READY':
+                    drawReadyScreen();
+                    break;
+
                 case 'PLAYING':
                 case 'STAGE_CLEAR':
                 case 'BONUS':
@@ -2573,6 +2880,9 @@
                     enemies.forEach(enemy => {
                         if (enemy.active) enemy.draw();
                     });
+
+                    // Draw bullet trails FIRST (under bullets)
+                    bulletTrails.forEach(trail => trail.draw());
 
                     // Draw bullets
                     bullets.forEach(bullet => bullet.draw());
@@ -2603,6 +2913,12 @@
 
                     // Draw floating texts
                     drawFloatingTexts();
+
+                    // Draw challenge text (NICE!, EXCELLENT!, etc.)
+                    drawChallengeText();
+
+                    // Draw boss warning if active
+                    drawBossWarning();
 
                     if (gameState === 'BONUS') {
                         drawBonusStage();
@@ -2644,6 +2960,17 @@
                 ctx.globalAlpha = screenFlash.alpha;
                 ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
                 ctx.globalAlpha = 1;
+            }
+
+            // Draw stage transition last (on top of EVERYTHING)
+            drawStageTransition();
+
+            // Slow motion indicator
+            if (slowMotion.active) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.font = 'bold 20px "Courier New"';
+                ctx.textAlign = 'right';
+                ctx.fillText('SLOW-MO', GAME_WIDTH - 20, GAME_HEIGHT - 20);
             }
         }
 

@@ -1,0 +1,7 @@
+{
+  "name": "game-balancer",
+  "description": "Tune difficulty, progression, and game balance for optimal engagement",
+  "version": "1.0.0",
+  "tags": ["game-design", "balance", "difficulty", "progression"],
+  "author": "CAET Simulators Project"
+}

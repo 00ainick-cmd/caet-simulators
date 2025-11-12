@@ -1,0 +1,7 @@
+{
+  "name": "caet-question-generator",
+  "description": "Generate realistic CAET exam questions across all four categories",
+  "version": "1.0.0",
+  "tags": ["education", "questions", "caet", "aviation"],
+  "author": "CAET Simulators Project"
+}

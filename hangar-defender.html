@@ -2720,15 +2720,20 @@
             score = 0;
             lives = 3;
             extraLifeThreshold = 10000;
-            gameState = 'PLAYING';
             dualFighterActive = false;
             capturedShip = null;
+            comboCount = 0;
+            comboTimer = 0;
 
             player = new Player(GAME_WIDTH / 2, GAME_HEIGHT - 80);
             createFormation(currentStage);
 
             bullets = [];
             particles = [];
+            bulletTrails = [];
+
+            // Use new intro system
+            startStageIntro();
         }
 
         // ===== MAIN UPDATE LOOP =====

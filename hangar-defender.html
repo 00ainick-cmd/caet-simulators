@@ -156,7 +156,7 @@
         };
 
         // ===== GAME STATE =====
-        let gameState = 'ATTRACT'; // ATTRACT, PLAYING, PAUSED, GAME_OVER, QUESTIONS, BONUS, NAME_ENTRY
+        let gameState = 'ATTRACT'; // ATTRACT, PLAYING, PAUSED, GAME_OVER, QUESTIONS, BONUS, NAME_ENTRY, STAGE_INTRO, READY
         let currentStage = 1;
         let score = 0;
         let highScore = 0;
@@ -165,6 +165,17 @@
         let lastFrameTime = 0;
         let keys = {};
         let frameCount = 0;
+
+        // ===== ARCADE JUICE EFFECTS =====
+        let screenShake = { x: 0, y: 0, intensity: 0, duration: 0 };
+        let screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
+        let comboCount = 0;
+        let comboTimer = 0;
+        let lastKillTime = 0;
+        let killStreak = 0;
+        let stageIntroTimer = 0;
+        let readyTimer = 0;
+        let perfectClearActive = false;
 
         // ===== ENTITY ARRAYS =====
         let player = null;
@@ -181,6 +192,78 @@
             musicEnabled: true
         };
 
+        // ===== ARCADE EFFECTS FUNCTIONS =====
+        function addScreenShake(intensity, duration) {
+            screenShake.intensity = intensity;
+            screenShake.duration = duration;
+        }
+
+        function updateScreenShake() {
+            if (screenShake.duration > 0) {
+                screenShake.duration--;
+                const intensity = screenShake.intensity * (screenShake.duration / 30);
+                screenShake.x = (Math.random() - 0.5) * intensity;
+                screenShake.y = (Math.random() - 0.5) * intensity;
+            } else {
+                screenShake.x = 0;
+                screenShake.y = 0;
+            }
+        }
+
+        function addScreenFlash(color, alpha, duration) {
+            screenFlash.active = true;
+            screenFlash.color = color;
+            screenFlash.alpha = alpha;
+            screenFlash.duration = duration;
+        }
+
+        function updateScreenFlash() {
+            if (screenFlash.duration > 0) {
+                screenFlash.duration--;
+                screenFlash.alpha *= 0.9; // Fade out
+            } else {
+                screenFlash.active = false;
+            }
+        }
+
+        function updateComboSystem() {
+            if (comboTimer > 0) {
+                comboTimer--;
+                if (comboTimer === 0) {
+                    comboCount = 0;
+                    killStreak = 0;
+                }
+            }
+        }
+
+        function addComboKill() {
+            const now = Date.now();
+            if (now - lastKillTime < 2000) { // 2 second combo window
+                comboCount++;
+                killStreak++;
+                comboTimer = 120; // 2 seconds at 60fps
+
+                // Combo announcements
+                if (comboCount === 5) {
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50, '5 COMBO!', COLORS.scoreBonus, 2);
+                    addScreenFlash(COLORS.scoreBonus, 0.3, 10);
+                } else if (comboCount === 10) {
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50, '10 COMBO!!', COLORS.perfect, 2.5);
+                    addScreenShake(8, 15);
+                    addScreenFlash(COLORS.perfect, 0.4, 15);
+                } else if (comboCount === 20) {
+                    showFloatingText(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50, '20 COMBO!!!', COLORS.warning, 3);
+                    addScreenShake(12, 20);
+                    addScreenFlash(COLORS.warning, 0.5, 20);
+                }
+            } else {
+                comboCount = 1;
+                killStreak = 1;
+                comboTimer = 120;
+            }
+            lastKillTime = now;
+        }
+
         // ===== PLAYER CLASS =====
         class Player {
             constructor(x, y, isDual = false) {
@@ -195,6 +278,7 @@
                 this.isDual = isDual;
                 this.color = COLORS.player;
                 this.engineGlow = 0;
+                this.muzzleFlash = 0;
             }
 
             update(deltaTime) {
@@ -210,11 +294,18 @@
                 if ((keys[' '] || keys['Enter']) && Date.now() - this.lastShot > this.shootCooldownTime) {
                     this.shoot();
                     this.lastShot = Date.now();
+                    this.muzzleFlash = 8; // 8 frames of muzzle flash
                     playSound('shoot');
+                    addScreenShake(2, 3); // Subtle shake on shoot
                 }
 
                 // Engine glow animation
                 this.engineGlow = (this.engineGlow + 0.1) % (Math.PI * 2);
+
+                // Muzzle flash decay
+                if (this.muzzleFlash > 0) {
+                    this.muzzleFlash--;
+                }
             }
 
             shoot() {
@@ -231,9 +322,23 @@
                 ctx.save();
                 ctx.translate(this.x, this.y);
 
+                // Muzzle flash
+                if (this.muzzleFlash > 0) {
+                    const flashAlpha = this.muzzleFlash / 8;
+                    ctx.fillStyle = `rgba(255, 255, 100, ${flashAlpha})`;
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#ffff00';
+                    ctx.beginPath();
+                    ctx.arc(0, -25, 8 * flashAlpha, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+
                 // Draw player ship (classic fighter jet from top-down view)
-                // Body
+                // Body with enhanced detail
                 ctx.fillStyle = COLORS.player;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = COLORS.player;
                 ctx.beginPath();
                 ctx.moveTo(0, -20); // Nose
                 ctx.lineTo(-8, 0); // Left wing
@@ -243,15 +348,29 @@
                 ctx.closePath();
                 ctx.fill();
 
-                // Cockpit
+                // Wing details
+                ctx.strokeStyle = '#00aaaa';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(-6, -5);
+                ctx.lineTo(-8, 0);
+                ctx.moveTo(6, -5);
+                ctx.lineTo(8, 0);
+                ctx.stroke();
+
+                // Cockpit with glow
                 ctx.fillStyle = '#ffff33';
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#ffff00';
                 ctx.beginPath();
                 ctx.arc(0, -5, 4, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Engine glow
+                // Engine glow (animated)
                 const glowAlpha = 0.5 + Math.sin(this.engineGlow) * 0.3;
                 ctx.fillStyle = `rgba(0, 255, 255, ${glowAlpha})`;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = COLORS.player;
                 ctx.beginPath();
                 ctx.arc(-6, 10, 3, 0, Math.PI * 2);
                 ctx.fill();
@@ -259,10 +378,13 @@
                 ctx.arc(6, 10, 3, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Glow effect
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = COLORS.player;
+                // Engine trail particles
+                if (frameCount % 3 === 0) {
+                    particles.push(new Particle(this.x - 6, this.y + 10, COLORS.player, 0, 1, 15, 2));
+                    particles.push(new Particle(this.x + 6, this.y + 10, COLORS.player, 0, 1, 15, 2));
+                }
 
+                ctx.shadowBlur = 0;
                 ctx.restore();
             }
         }
@@ -331,6 +453,7 @@
                 this.tractorBeamProgress = 0;
                 this.animFrame = 0;
                 this.animSpeed = 0.1;
+                this.hitFlash = 0; // Hit flash effect
 
                 // Set properties based on type
                 this.setupType();
@@ -371,6 +494,11 @@
 
             update(formationOffsetX = 0) {
                 this.animFrame += this.animSpeed;
+
+                // Decay hit flash
+                if (this.hitFlash > 0) {
+                    this.hitFlash--;
+                }
 
                 switch(this.state) {
                     case 'ENTERING':
@@ -483,6 +611,19 @@
             draw() {
                 ctx.save();
                 ctx.translate(this.x, this.y);
+
+                // Hit flash effect
+                if (this.hitFlash > 0) {
+                    ctx.globalAlpha = 0.5 + (this.hitFlash / 10) * 0.5;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.width / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = 1;
+                }
 
                 // Draw enemy based on type
                 switch(this.type) {
@@ -693,7 +834,7 @@
 
         // ===== PARTICLE CLASS =====
         class Particle {
-            constructor(x, y, color, vx, vy, life = 30) {
+            constructor(x, y, color, vx, vy, life = 30, size = 3) {
                 this.x = x;
                 this.y = y;
                 this.color = color;
@@ -701,13 +842,15 @@
                 this.vy = vy;
                 this.life = life;
                 this.maxLife = life;
-                this.size = 3;
+                this.size = size;
                 this.active = true;
+                this.gravity = 0.1;
             }
 
             update() {
                 this.x += this.vx;
                 this.y += this.vy;
+                this.vy += this.gravity; // Add gravity
                 this.life--;
                 if (this.life <= 0) this.active = false;
             }
@@ -716,7 +859,10 @@
                 const alpha = this.life / this.maxLife;
                 ctx.globalAlpha = alpha;
                 ctx.fillStyle = this.color;
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = this.color;
                 ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+                ctx.shadowBlur = 0;
                 ctx.globalAlpha = 1;
             }
         }
@@ -1340,20 +1486,43 @@
         }
 
         // ===== EXPLOSION EFFECT =====
-        function createExplosion(x, y, size = 20) {
+        function createExplosion(x, y, size = 20, isEnemy = true) {
             playSound('explosion');
 
-            // Create particle burst
-            const particleCount = size;
-            for (let i = 0; i < particleCount; i++) {
-                const angle = (Math.PI * 2 * i) / particleCount;
-                const speed = Math.random() * 3 + 2;
-                const vx = Math.cos(angle) * speed;
-                const vy = Math.sin(angle) * speed;
-                const colors = [COLORS.explosion1, COLORS.explosion2, COLORS.explosion3];
-                const color = colors[Math.floor(Math.random() * colors.length)];
-                particles.push(new Particle(x, y, color, vx, vy, 30 + Math.random() * 20));
+            // Screen shake based on explosion size
+            const shakeIntensity = Math.min(size / 3, 10);
+            addScreenShake(shakeIntensity, 10);
+
+            // Screen flash for big explosions
+            if (size > 25) {
+                addScreenFlash(COLORS.explosion1, 0.2, 8);
             }
+
+            // Create multiple particle rings for better explosion effect
+            const particleCount = size * 2;
+            const rings = 3;
+
+            for (let ring = 0; ring < rings; ring++) {
+                const ringDelay = ring * 3;
+                const ringSpeed = (rings - ring) * 1.5;
+
+                for (let i = 0; i < particleCount / rings; i++) {
+                    const angle = (Math.PI * 2 * i) / (particleCount / rings) + Math.random() * 0.3;
+                    const speed = Math.random() * ringSpeed + ringSpeed;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+
+                    // Color progression: orange -> yellow -> white
+                    const colors = [COLORS.explosion1, COLORS.explosion2, COLORS.explosion3];
+                    const color = colors[ring % colors.length];
+                    const particleSize = 4 - ring;
+
+                    particles.push(new Particle(x, y, color, vx, vy, 40 + Math.random() * 20 - ringDelay, particleSize));
+                }
+            }
+
+            // Add bright core flash
+            particles.push(new Particle(x, y, '#ffffff', 0, 0, 15, size / 2));
         }
 
         // ===== FORMATION SYSTEM =====
@@ -1423,21 +1592,44 @@
 
                     if (bullet.collidesWith(enemy)) {
                         bullet.active = false;
-                        enemy.active = false;
 
-                        // Award points
-                        const points = enemy.diving ? enemy.pointsDiving : enemy.pointsFormation;
-                        const multiplier = dualFighterActive ? 1.5 : 1;
-                        addScore(Math.floor(points * multiplier));
+                        // Hit flash before destruction
+                        enemy.hitFlash = 10;
 
-                        // Check if enemy had captured ship
-                        if (enemy.capturedShip) {
-                            // Rescue!
-                            rescueCapturedShip();
-                            addScore(1000);
-                        }
+                        // Delayed destruction for hit flash effect
+                        setTimeout(() => {
+                            if (!enemy.active) return; // Already destroyed
+                            enemy.active = false;
 
-                        createExplosion(enemy.x, enemy.y, 20);
+                            // Award points
+                            const points = enemy.diving ? enemy.pointsDiving : enemy.pointsFormation;
+                            let multiplier = dualFighterActive ? 1.5 : 1;
+
+                            // Combo multiplier
+                            if (comboCount > 5) multiplier *= 1.2;
+                            if (comboCount > 10) multiplier *= 1.5;
+
+                            const finalPoints = Math.floor(points * multiplier);
+                            addScore(finalPoints);
+
+                            // Show points gained
+                            showFloatingText(enemy.x, enemy.y, `+${finalPoints}`, COLORS.scoreBonus, 1.2);
+
+                            // Add to combo
+                            addComboKill();
+
+                            // Check if enemy had captured ship
+                            if (enemy.capturedShip) {
+                                // Rescue!
+                                rescueCapturedShip();
+                                addScore(1000);
+                                showFloatingText(enemy.x, enemy.y - 30, 'RESCUED!', COLORS.perfect, 1.5);
+                            }
+
+                            // Create explosion with size based on enemy type
+                            const explosionSize = enemy.type === 'boss' ? 30 : 20;
+                            createExplosion(enemy.x, enemy.y, explosionSize);
+                        }, 50); // 50ms delay for hit flash
                     }
                 });
             });
@@ -1545,14 +1737,15 @@
 
         // ===== FLOATING TEXT =====
         let floatingTexts = [];
-        function showFloatingText(x, y, text, color) {
+        function showFloatingText(x, y, text, color, scale = 1) {
             floatingTexts.push({
                 x: x,
                 y: y,
                 text: text,
                 color: color,
                 life: 60,
-                vy: -1
+                vy: -1,
+                scale: scale
             });
         }
 
@@ -1568,9 +1761,13 @@
             floatingTexts.forEach(ft => {
                 ctx.globalAlpha = ft.life / 60;
                 ctx.fillStyle = ft.color;
-                ctx.font = 'bold 20px "Courier New"';
+                const fontSize = Math.floor(20 * ft.scale);
+                ctx.font = `bold ${fontSize}px "Courier New"`;
                 ctx.textAlign = 'center';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = ft.color;
                 ctx.fillText(ft.text, ft.x, ft.y);
+                ctx.shadowBlur = 0;
                 ctx.globalAlpha = 1;
             });
         }
@@ -1687,6 +1884,38 @@
             ctx.textAlign = 'center';
             if (frameCount % 60 < 30) {
                 ctx.fillText('1UP', GAME_WIDTH / 2, 30);
+            }
+
+            // Combo counter (if active)
+            if (comboCount > 1 && comboTimer > 0) {
+                ctx.textAlign = 'center';
+                const comboAlpha = Math.min(comboTimer / 60, 1);
+                ctx.globalAlpha = comboAlpha;
+
+                // Combo box
+                const comboColor = comboCount > 10 ? COLORS.perfect : (comboCount > 5 ? COLORS.scoreBonus : COLORS.hudText);
+                ctx.fillStyle = comboColor;
+                ctx.font = 'bold 24px "Courier New"';
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = comboColor;
+
+                ctx.fillText(`${comboCount} COMBO!`, GAME_WIDTH / 2, GAME_HEIGHT - 40);
+
+                // Combo bar
+                const barWidth = 200;
+                const barHeight = 8;
+                const barX = (GAME_WIDTH - barWidth) / 2;
+                const barY = GAME_HEIGHT - 20;
+
+                ctx.strokeStyle = comboColor;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                const fillWidth = (comboTimer / 120) * barWidth;
+                ctx.fillRect(barX, barY, fillWidth, barHeight);
+
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha = 1;
             }
         }
 
@@ -2223,6 +2452,11 @@
         function update(deltaTime) {
             frameCount++;
 
+            // Update arcade effects
+            updateScreenShake();
+            updateScreenFlash();
+            updateComboSystem();
+
             // Update stars
             stars.forEach(star => star.update());
 
@@ -2319,6 +2553,10 @@
             ctx.fillStyle = COLORS.background;
             ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
+            // Apply screen shake
+            ctx.save();
+            ctx.translate(screenShake.x, screenShake.y);
+
             // Draw stars
             stars.forEach(star => star.draw());
 
@@ -2395,6 +2633,17 @@
                 case 'NAME_ENTRY':
                     drawNameEntry();
                     break;
+            }
+
+            // Restore context (end screen shake)
+            ctx.restore();
+
+            // Draw screen flash on top of everything
+            if (screenFlash.active) {
+                ctx.fillStyle = screenFlash.color;
+                ctx.globalAlpha = screenFlash.alpha;
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+                ctx.globalAlpha = 1;
             }
         }
 
